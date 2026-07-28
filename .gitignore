@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-single/
+.cache-single/
+_raw/
+screenshots/
+.DS_Store

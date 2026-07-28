@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>구구성 수호대 — 에셋 쇼룸</title>
+<style>
+  :root { --line:#221d1a; --hanji:#faf6ee; }
+  body { margin:0; background:var(--hanji); color:var(--line);
+         font-family:'Pretendard','Apple SD Gothic Neo',system-ui,sans-serif; }
+  header { position:sticky; top:0; background:#1b4f8c; color:#fff; padding:12px 16px;
+           display:flex; gap:14px; align-items:center; flex-wrap:wrap; z-index:2; }
+  h1 { font-size:18px; margin:0; }
+  label { font-size:14px; display:flex; gap:6px; align-items:center; }
+  main { padding:16px; }
+  h2 { border-bottom:3px solid var(--line); padding-bottom:6px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }
+  .cell { border:3px solid var(--line); border-radius:12px; background:#fff; padding:8px;
+          display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .cell .box { display:grid; place-items:end center; width:100%; }
+  .cell img { max-width:100%; object-fit:contain; }
+  .cell .k { font-weight:800; font-size:13px; }
+  .cell .m { font-size:11px; color:#4a4038; text-align:center; }
+  .bg .cell { grid-column: span 2; }
+  .bg img { width:100%; height:auto; }
+  .baseline { position:relative; }
+  .baseline::after { content:''; position:absolute; left:0; right:0; bottom:0; border-bottom:2px dashed #d4342f; }
+  .warn { color:#d4342f; font-weight:800; }
+</style>
+</head>
+<body>
+<header>
+  <h1>에셋 쇼룸</h1>
+  <label>크기 <input id="scale" type="range" min="40" max="220" value="120"></label>
+  <label><input id="bl" type="checkbox" checked> 바닥선 표시</label>
+  <label><input id="dark" type="checkbox"> 어두운 배경</label>
+  <span id="count"></span>
+</header>
+<main id="out">불러오는 중…</main>
+<script type="module">
+const out = document.getElementById('out');
+const res = await fetch('./public/assets/manifest.json').catch(() => null)
+  ?? await fetch('./assets/manifest.json');
+const { assets } = await res.json();
+document.getElementById('count').textContent = `${assets.length}개`;
+const GROUPS = [['unit','셈지기'],['enemy','엉킴괴수'],['castle','성'],['bg','배경']];
+out.innerHTML = '';
+for (const [kind, label] of GROUPS) {
+  const list = assets.filter(a => a.kind === kind);
+  if (!list.length) continue;
+  const h = document.createElement('h2'); h.textContent = `${label} (${list.length})`;
+  const g = document.createElement('div'); g.className = `grid ${kind}`;
+  for (const a of list) {
+    const c = document.createElement('div'); c.className = 'cell';
+    const box = document.createElement('div'); box.className = 'box baseline';
+    const img = document.createElement('img');
+    img.src = a.path.startsWith('public/') ? './' + a.path : './public/' + a.path;
+    img.onerror = () => { img.replaceWith(Object.assign(document.createElement('div'), { className:'warn', textContent:'로드 실패' })); };
+    box.append(img);
+    const k = document.createElement('div'); k.className='k'; k.textContent = a.key;
+    const m = document.createElement('div'); m.className='m'; m.textContent = `${a.origin} · ${a.kind}`;
+    c.append(box, k, m); g.append(c);
+  }
+  out.append(h, g);
+}
+const apply = () => {
+  const s = document.getElementById('scale').value;
+  for (const b of document.querySelectorAll('.grid:not(.bg) .box')) b.style.height = s + 'px';
+  for (const b of document.querySelectorAll('.baseline')) b.style.setProperty('--bl', '');
+  document.body.style.background = document.getElementById('dark').checked ? '#221d1a' : '#faf6ee';
+  document.body.style.color = document.getElementById('dark').checked ? '#faf6ee' : '#221d1a';
+  for (const b of document.querySelectorAll('.box')) b.classList.toggle('baseline', document.getElementById('bl').checked);
+};
+for (const id of ['scale','bl','dark']) document.getElementById(id).addEventListener('input', apply);
+apply();
+</script>
+</body>
+</html>

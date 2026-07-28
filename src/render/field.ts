@@ -1,0 +1,186 @@
+import type { Battle } from '../sim/core';
+import { MAP_LEN } from '../sim/stages';
+import { ALLY_BY_ID, ENEMY_BY_ID } from '../sim/units';
+import { getImage } from './assets';
+
+/**
+ * 전장 렌더러 — Canvas 2D.
+ *
+ * 🔴 모션은 생성하지 않는다. 정지 키아트 1장 + **코드 변형**으로 움직임을 만든다
+ *    (AI는 프레임 간 연속성을 못 만든다 — 반복 실측된 실패).
+ *    걷기 = 상하 bob + 미세 기울기 / 공격 = 스윙 + 스쿼시 / 피격 = 흰 틴트 + 넉백.
+ * 🔴 저사양(웨일북) 주의: 다수 스프라이트에 비정수 스케일을 상시 적용하지 않는다
+ *    (비트맵 fast path 붕괴로 30fps 반락). 기본은 translate/rotate까지만.
+ */
+
+export interface RenderOpts {
+  reduceMotion: boolean;
+  lowSpec: boolean;
+}
+
+const SPRITE_H = 96;      // 기준 스프라이트 높이(px) — 스케일 확정표
+const GROUND_RATIO = 0.86; // 캔버스 높이 중 지면 위치
+
+export class FieldRenderer {
+  private ctx: CanvasRenderingContext2D;
+  private dpr = 1;
+  private w = 0;
+  private h = 0;
+  shakeUntil = 0;
+  private shakeMag = 0;
+
+  constructor(private canvas: HTMLCanvasElement, private bgKey: string, private opts: RenderOpts) {
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) throw new Error('canvas 2d context를 만들 수 없습니다');
+    this.ctx = ctx;
+    this.resize();
+  }
+
+  setOpts(o: Partial<RenderOpts>) { this.opts = { ...this.opts, ...o }; }
+
+  resize(): void {
+    const r = this.canvas.getBoundingClientRect();
+    // 저사양 기기에서 DPR 2 이상은 픽셀을 4배로 늘려 프레임을 먹는다 → 1.5로 캡
+    this.dpr = Math.min(this.opts.lowSpec ? 1 : 1.5, globalThis.devicePixelRatio || 1);
+    this.w = Math.max(1, Math.floor(r.width));
+    this.h = Math.max(1, Math.floor(r.height));
+    this.canvas.width = Math.floor(this.w * this.dpr);
+    this.canvas.height = Math.floor(this.h * this.dpr);
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  }
+
+  shake(mag = 4): void {
+    if (this.opts.reduceMotion) return;
+    this.shakeMag = mag;
+    this.shakeUntil = performance.now() + 180;
+  }
+
+  /** 월드 x(0~1000) → 화면 x */
+  private sx(x: number): number {
+    // 성 스프라이트 절반이 들어갈 만큼은 비워 둔다(안 그러면 양 끝 성이 잘린다)
+    const castleW = Math.min(160, this.h * 0.5) * 0.9;
+    const pad = Math.min(this.w * 0.12, Math.max(70, castleW / 2 + 8));
+    return pad + (x / MAP_LEN) * (this.w - pad * 2);
+  }
+
+  draw(b: Battle, now: number): void {
+    const { ctx } = this;
+    const groundY = this.h * GROUND_RATIO;
+
+    ctx.save();
+    if (now < this.shakeUntil) {
+      const k = (this.shakeUntil - now) / 180;
+      ctx.translate((Math.random() - 0.5) * this.shakeMag * k, (Math.random() - 0.5) * this.shakeMag * k);
+    }
+
+    // 배경
+    const bg = getImage(this.bgKey);
+    if (bg) {
+      ctx.drawImage(bg, 0, 0, this.w, this.h);
+    } else {
+      const g = ctx.createLinearGradient(0, 0, 0, this.h);
+      g.addColorStop(0, '#8fc4e8'); g.addColorStop(1, '#cfe6c5');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, this.w, this.h);
+    }
+    // 지면 띠
+    ctx.fillStyle = 'rgba(52,40,28,0.20)';
+    ctx.fillRect(0, groundY, this.w, this.h - groundY);
+
+    this.drawCastle(this.sx(0), groundY, 'castle_ally', b.playerCastleHp / b.stage.playerCastleHp, true);
+    this.drawCastle(this.sx(MAP_LEN), groundY, 'castle_foe', b.castleHp / b.stage.castleHp, false);
+
+    // 유닛 — 뒤쪽(작은 x)부터 그려 앞줄이 위에 오게 한다
+    const sorted = [...b.units].sort((p, q) => p.x - q.x);
+    for (const u of sorted) this.drawUnit(u, groundY, b.t);
+
+    ctx.restore();
+  }
+
+  private drawCastle(cx: number, groundY: number, key: string, ratio: number, ally: boolean): void {
+    const { ctx } = this;
+    const img = getImage(key);
+    const h = Math.min(160, this.h * 0.5);
+    const w = h * 0.9;
+    const x = cx - w / 2;
+    const y = groundY - h;
+    if (img) {
+      ctx.drawImage(img, x, y, w, h);
+    } else {
+      ctx.fillStyle = ally ? '#1b4f8c' : '#3a2b28';
+      ctx.fillRect(x, y, w, h);
+    }
+    // HP 바 — 색만이 아니라 위치(좌/우)와 라벨로도 구분된다
+    // 낮은 화면에서는 성 위 공간이 부족해 HP 바·라벨이 캔버스 위로 잘린다 → 아래로 밀어 둔다
+    const bw = w * 1.15, bh = 12, by = Math.max(18, y - 20);
+    // 🔴 성이 화면 끝에 붙어 있으면 HP 바가 캔버스 밖으로 잘린다 → 좌우로 가둔다
+    const bx = Math.max(4, Math.min(this.w - bw - 4, cx - bw / 2));
+    ctx.fillStyle = '#0008'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+    ctx.fillStyle = '#e6ded1'; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = ally ? '#2e8b6f' : '#d4342f';
+    ctx.fillRect(bx, by, bw * Math.max(0, Math.min(1, ratio)), bh);
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(ally ? '우리 성' : '엉킴 성', bx + bw / 2, by - 6);
+  }
+
+  private drawUnit(u: { side: 1 | -1; defId: string; x: number; hp: number; maxHp: number; hurtAt: number; swingAt: number; spd: number }, groundY: number, simT: number): void {
+    const { ctx } = this;
+    const def = u.side === 1 ? ALLY_BY_ID.get(u.defId) : ENEMY_BY_ID.get(u.defId);
+    const img = getImage(u.defId);
+    const scale = def && 'hp' in def ? Math.min(1.5, 0.8 + Math.log10(Math.max(10, def.hp)) * 0.16) : 1;
+    const h = SPRITE_H * scale;
+    const w = h;
+    const x = this.sx(u.x);
+
+    // 걷기 bob — reduce-motion이면 정지
+    const moving = u.spd > 0;
+    const bob = this.opts.reduceMotion || !moving ? 0 : Math.sin(simT * 7 + u.x * 0.07) * 3;
+    // 공격 스윙 (0.18초)
+    const sw = simT - u.swingAt;
+    const swing = sw >= 0 && sw < 0.18 && !this.opts.reduceMotion ? Math.sin((sw / 0.18) * Math.PI) * 0.28 : 0;
+    // 피격 틴트 (0.15초)
+    const hurt = simT - u.hurtAt >= 0 && simT - u.hurtAt < 0.15;
+
+    ctx.save();
+    ctx.translate(x, groundY + bob);
+    if (swing) ctx.rotate(u.side === 1 ? swing : -swing);
+    // 🔴 반전하지 않는다. 아군 키아트는 우향, 적 키아트는 좌향으로 생성했으므로
+    //    여기서 또 뒤집으면 적이 진행 방향과 반대로 보게 된다(실측).
+
+    if (img) {
+      ctx.drawImage(img, -w / 2, -h, w, h);
+      if (hurt) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(img, -w / 2, -h, w, h);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    } else {
+      ctx.fillStyle = u.side === 1 ? '#2e8b6f' : '#d4342f';
+      ctx.fillRect(-w / 2, -h, w, h);
+    }
+    ctx.restore();
+
+    // 발밑 링 — 🔴 적아군을 색만으로 구분하지 않는다(모양도 다르게: 아군 원 / 적 삼각)
+    ctx.save();
+    ctx.translate(x, groundY + 4);
+    ctx.strokeStyle = '#221d1a'; ctx.lineWidth = 2;
+    ctx.fillStyle = u.side === 1 ? 'rgba(46,139,111,.85)' : 'rgba(212,52,47,.85)';
+    ctx.beginPath();
+    if (u.side === 1) { ctx.ellipse(0, 0, 15, 6, 0, 0, Math.PI * 2); }
+    else { ctx.moveTo(-14, 5); ctx.lineTo(14, 5); ctx.lineTo(0, -7); ctx.closePath(); }
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+
+    // 체력 바 (다친 유닛만 — 화면을 덜 어지럽힌다)
+    if (u.hp < u.maxHp) {
+      const bw = 34, bh = 5;
+      ctx.fillStyle = '#0009'; ctx.fillRect(x - bw / 2 - 1, groundY - h - 11, bw + 2, bh + 2);
+      ctx.fillStyle = '#e6ded1'; ctx.fillRect(x - bw / 2, groundY - h - 10, bw, bh);
+      ctx.fillStyle = u.side === 1 ? '#2e8b6f' : '#d4342f';
+      ctx.fillRect(x - bw / 2, groundY - h - 10, bw * Math.max(0, u.hp / u.maxHp), bh);
+    }
+  }
+}

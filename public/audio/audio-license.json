@@ -1,0 +1,20 @@
+{
+  "entries": [
+    {
+      "file": "kenney_ui-audio/",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28"
+    },
+    {
+      "file": "kenney_impact-sounds/",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney",
+      "url": "https://kenney.nl/assets/impact-sounds",
+      "fetched": "2026-07-28"
+    }
+  ]
+}

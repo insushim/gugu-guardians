@@ -1,0 +1,23 @@
+{
+  "name": "gugu-guardians",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "구구성 수호대 — 초등 연산 학습 라인 디펜스",
+  "scripts": {
+    "dev": "vite --port 5183 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5184 --strictPort",
+    "test": "vitest run",
+    "probe": "node tools/balance-probe.mjs",
+    "check": "tsc --noEmit && vitest run && node tools/balance-probe.mjs",
+    "build:single": "npm run build && node tools/build-single.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "puppeteer": "^25.4.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
