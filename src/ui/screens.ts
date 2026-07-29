@@ -17,6 +17,7 @@ import { QuizSession } from '../edu/session';
 import { buildChoices } from '../edu/distractor';
 import { makeRng, type Question } from '../edu/generator';
 import { play, syncBgmSetting } from '../render/audio';
+import { assetUrl } from '../render/assets';
 import { accuracy, automaticity, questionDensity, retention, thetaDelta, thetaDisplayable, weakTypes } from '../edu/stats';
 import {
   boardEnabled, fetchBoard, submitScore, grantConsent, revokeConsent, entryName, type BoardEntry,
@@ -55,7 +56,11 @@ export function menuScreen(go: Go): { node: HTMLElement } {
 
   const node = el('section', { class: 'screen menu-screen' },
     el('div', { class: 'menu-hero' },
-      el('div', { class: 'crest', 'aria-hidden': 'true' }, '龜'),
+      // 🔴 예전에는 여기에 한자 龜(거북 귀)를 썼다. 대상이 초등 2~4학년인데 16획짜리
+      //    한자는 읽을 수 없고, 파비콘 크기에서는 획이 뭉쳐 얼룩이 된다. 게임 안에 이미
+      //    있는 수호 짐승(해태)으로 바꿨다 — 아이가 아는 캐릭터라 바로 알아본다.
+      el('div', { class: 'crest', 'aria-hidden': 'true' },
+        el('img', { src: assetUrl('haetae'), alt: '' })),
       el('h1', { class: 'logo' }, '구구성 수호대'),
       el('p', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
       clearedN

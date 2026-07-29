@@ -138,8 +138,7 @@ ${js}
 </script>`;
 
 // 파비콘도 data URI 로 — 파일 하나만 올릴 수 있는 곳에서도 탭 아이콘이 살아야 한다
-const iconSvg = readFileSync(join(ROOT, 'public/icon.svg'), 'utf8');
-const iconUri = `data:image/svg+xml;base64,${Buffer.from(iconSvg).toString('base64')}`;
+const iconUri = dataUri(join(ROOT, 'public/favicon-48.png'));
 
 const standalone = `<!doctype html>
 <html lang="ko">
@@ -147,7 +146,7 @@ const standalone = `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
 <meta name="theme-color" content="#1B4F8C" />
-<link rel="icon" href="${iconUri}" type="image/svg+xml" />
+<link rel="icon" href="${iconUri}" type="image/png" />
 ${fragment.split('\n').slice(0, 2).join('\n')}
 <style>
 ${css}
