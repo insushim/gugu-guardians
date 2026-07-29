@@ -464,7 +464,7 @@ export function codexScreen(go: Go): { node: HTMLElement } {
               store.update((s) => { upgrade(u, s.roster[u.id]); });
               play('correct');
               refresh();
-            }, 'btn sm up');
+            }, 'btn sm ghost up');
             b.disabled = !canUpgrade(u, entry);
             card.append(b);
           }

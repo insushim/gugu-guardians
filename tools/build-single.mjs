@@ -28,19 +28,29 @@ if (!existsSync(join(DIST, 'index.html'))) die('dist/ 가 없다. 먼저 `npm ru
 mkdirSync(OUT, { recursive: true });
 mkdirSync(TMP, { recursive: true });
 
-// ── 1. 배경만 축소 재인코딩 (단일 파일은 base64 라 원본의 약 1.33배로 부푼다)
+// ── 1. 축소 재인코딩 (단일 파일은 base64 라 원본의 약 1.33배로 부푼다)
+//     v2에서 에셋이 18→44개로 늘어 배경만 줄여서는 3MB를 넘는다. 스프라이트도 함께 줄인다.
 const PY = join(process.env.HOME, '.claude/venvs/vibes/bin/python');
-const BGS = ['bg_cave', 'bg_field', 'bg_wall'];
+const manifest = JSON.parse(readFileSync(join(ROOT, 'public/assets/manifest.json'), 'utf8'));
+// 🔴 배경 목록을 하드코딩하면 새 배경이 스프라이트 크기(168px)로 줄어든다 — 매니페스트에서 읽는다
+const BGS = manifest.assets.filter((a) => a.kind === 'bg').map((a) => basename(a.path, '.webp'));
 if (existsSync(PY)) {
   execFileSync(PY, ['-c', `
-import sys
+import glob, os
 from PIL import Image
-for k in ${JSON.stringify(BGS)}:
-    src = "${join(ROOT, 'public/assets')}/%s.webp" % k
+BGS = set(${JSON.stringify(BGS)})
+for src in glob.glob("${join(ROOT, 'public/assets')}/*.webp"):
+    k = os.path.basename(src)[:-5]
     dst = "${TMP}/%s.webp" % k
-    im = Image.open(src).convert("RGB")
-    im = im.resize((1024, int(im.height * 1024 / im.width)), Image.LANCZOS)
-    im.save(dst, "WEBP", quality=68, method=6)
+    im = Image.open(src)
+    if k in BGS:
+        im = im.convert("RGB").resize((1024, int(im.height * 1024 / im.width)), Image.LANCZOS)
+        im.save(dst, "WEBP", quality=66, method=6)
+    else:
+        im = im.convert("RGBA")
+        h = 168
+        im = im.resize((max(1, int(im.width * h / im.height)), h), Image.LANCZOS)
+        im.save(dst, "WEBP", quality=80, method=6)
 `], { stdio: 'inherit' });
 } else {
   console.warn('! PIL 없음 — 배경을 원본 크기로 인라인한다(파일이 커진다)');
@@ -53,7 +63,6 @@ const dataUri = (abs) => {
   return `data:${mime};base64,${readFileSync(abs).toString('base64')}`;
 };
 
-const manifest = JSON.parse(readFileSync(join(ROOT, 'public/assets/manifest.json'), 'utf8'));
 const targets = [];
 for (const a of manifest.assets) {
   const key = basename(a.path, '.webp');
