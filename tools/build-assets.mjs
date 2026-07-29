@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 에셋 파이프라인: _raw/*.png → public/assets/*.webp + assets/manifest.json
+ * 에셋 파이프라인: _raw/*.png → public/assets/*.webp + public/assets/manifest.json
  *
  * 🔴 원본 PNG를 public/ 에 두지 않는다 — 번들에 통째로 복사돼 dist가 수십 배 부푼다(실측).
  *    원본은 배포 대상 밖(_raw/)에 남기고 런타임용 WebP만 public/ 에 만든다.
@@ -79,7 +79,7 @@ assets.sort((a, b) => a.key.localeCompare(b.key));
 
 mkdirSync(join(ROOT, 'assets'), { recursive: true });
 const manifestJson = JSON.stringify({ version: 1, assets }, null, 2) + '\n';
-writeFileSync(join(ROOT, 'assets/manifest.json'), manifestJson);
+writeFileSync(join(ROOT, 'public/assets/manifest.json'), manifestJson);
 // 쇼룸(정적 페이지)이 런타임에 읽을 수 있도록 배포 경로에도 같은 파일을 둔다
 writeFileSync(join(OUT, 'manifest.json'), manifestJson);
 

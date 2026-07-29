@@ -1,8 +1,12 @@
 /**
- * 에셋 로더 — 🔴 경로는 코드에 박지 않는다. `assets/manifest.json` 이 단일 진실원이다.
- *    (생성 스크립트·게임 로더·쇼룸·크레딧 생성기가 같은 파일을 본다.)
+ * 에셋 로더 — 🔴 경로는 코드에 박지 않는다. `public/assets/manifest.json` 이 단일 진실원이다.
+ *    (생성 스크립트·게임 로더·쇼룸·단일파일 빌더·크레딧 생성기가 **같은 파일**을 본다.)
+ *
+ * 🔴 예전에는 루트 `assets/manifest.json` 과 `public/assets/manifest.json` 두 벌이 있었다.
+ *    앱은 앞쪽을, 빌더·쇼룸은 뒤쪽을 읽어서 한쪽에만 에셋을 추가하면 이미지가 조용히
+ *    로드되지 않는다(실제로 그랬다 — 인장이 빈 원으로 떴다). 한 파일로 합쳤다.
  */
-import manifestRaw from '../../assets/manifest.json';
+import manifestRaw from '../../public/assets/manifest.json';
 
 export interface AssetEntry {
   key: string;

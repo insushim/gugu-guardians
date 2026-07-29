@@ -60,7 +60,7 @@ export function menuScreen(go: Go): { node: HTMLElement } {
       //    한자는 읽을 수 없고, 파비콘 크기에서는 획이 뭉쳐 얼룩이 된다. 게임 안에 이미
       //    있는 수호 짐승(해태)으로 바꿨다 — 아이가 아는 캐릭터라 바로 알아본다.
       el('div', { class: 'crest', 'aria-hidden': 'true' },
-        el('img', { src: assetUrl('haetae'), alt: '' })),
+        el('img', { src: assetUrl('crest_haetae'), alt: '' })),
       el('h1', { class: 'logo' }, '구구성 수호대'),
       el('p', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
       clearedN

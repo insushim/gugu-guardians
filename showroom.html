@@ -40,7 +40,7 @@
 <script type="module">
 const out = document.getElementById('out');
 const res = await fetch('./public/assets/manifest.json').catch(() => null)
-  ?? await fetch('./assets/manifest.json');
+  ?? await fetch('./assets/manifest.json');   // dist/ 에서 열었을 때
 const { assets } = await res.json();
 document.getElementById('count').textContent = `${assets.length}개`;
 const GROUPS = [['unit','셈지기'],['enemy','엉킴괴수'],['castle','성'],['bg','배경']];
