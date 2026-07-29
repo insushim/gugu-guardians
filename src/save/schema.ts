@@ -1,17 +1,28 @@
 import type { QType } from '../edu/curriculum';
 import { ALL_TYPE_IDS } from '../edu/curriculum';
+import { ALLIES, ALLY_BY_ID, maxLevel, progressionAllies } from '../sim/units';
+import { PITY_LEGEND } from '../meta/summon';
 import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
 import { today } from '../edu/date';
 
 export const SAVE_KEY = 'gugu:save';
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+
+/** 스테이지가 무한이라 상한이 없다 — 다만 손상 세이브가 무한 루프를 만들지 않도록 선은 둔다 */
+export const MAX_STAGE_KEY = 9999;
+
+/** 시작 보유 셈지기 — data/roster.json 의 unlock:1 과 일치해야 한다 */
+export const STARTER_UNITS = ['jipsin', 'kkachi', 'musoe'];
 
 export interface SaveData {
   profile: { nickname: string; gradeMax: number; createdAt: string };
-  progress: { cleared: Record<string, number>; challengeCleared: boolean };
+  progress: { cleared: Record<string, number>; maxStage: number };
   deck: string[];
+  /** 보유 셈지기 — 소환·진도로 얻는다. 게임 내 전력의 단일 진실원 */
+  roster: Record<string, { level: number; shards: number }>;
+  summon: { sinceLegend: number; total: number };
   codex: { unlocked: string[] };
   currency: { meokmul: number; recovered: number };
   edu: {
@@ -42,9 +53,11 @@ export function randomNickname(rand: () => number = Math.random): string {
 export function defaultSave(): SaveData {
   return {
     profile: { nickname: randomNickname(), gradeMax: 4, createdAt: today() },
-    progress: { cleared: {}, challengeCleared: false },
+    progress: { cleared: {}, maxStage: 0 },
     deck: [],
-    codex: { unlocked: ['kkachi', 'musoe'] },
+    roster: Object.fromEntries(STARTER_UNITS.map((id) => [id, { level: 1, shards: 0 }])),
+    summon: { sinceLegend: 0, total: 0 },
+    codex: { unlocked: [...STARTER_UNITS] },
     currency: { meokmul: 0, recovered: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
     settings: { sound: true, fontScale: 1, reduceMotion: false },
@@ -110,9 +123,35 @@ export function normalize(input: unknown): SaveData {
   if (isObj(progress['cleared'])) {
     for (const [k, v] of Object.entries(progress['cleared'])) {
       const n = Number(k);
-      if (Number.isInteger(n) && n >= 1 && n <= 11) cleared[k] = Math.floor(num(v, 0, 0, 3));
+      if (Number.isInteger(n) && n >= 1 && n <= MAX_STAGE_KEY) cleared[k] = Math.floor(num(v, 0, 0, 3));
     }
   }
+  const clearedMax = Object.keys(cleared).reduce((m, k) => Math.max(m, Number(k)), 0);
+
+  // ── 보유 셈지기 ────────────────────────────────────────────────────────
+  // v1 세이브에는 roster 가 없다. 그때는 codex.unlocked 가 사실상 보유 목록이었으므로
+  // 그대로 승격시킨다. 진도로 이미 열렸어야 할 유닛도 채워 넣는다 — 안 그러면
+  // 업데이트 후 기존 플레이어의 셈지기가 사라진 것처럼 보인다.
+  const rosterIn = isObj(d['roster']) ? d['roster'] : {};
+  const roster: Record<string, { level: number; shards: number }> = {};
+  const validIds = new Set(ALLIES.map((u) => u.id));
+  for (const [id, raw] of Object.entries(rosterIn)) {
+    if (!validIds.has(id) || !isObj(raw)) continue;
+    const unit = ALLY_BY_ID.get(id)!;
+    roster[id] = {
+      level: Math.floor(num(raw['level'], 1, 1, maxLevel(unit.rarity))),
+      shards: Math.floor(num(raw['shards'], 0, 0, 99999)),
+    };
+  }
+  const legacyOwned = arr(codex['unlocked'], (x) => (typeof x === 'string' ? x : null));
+  for (const id of [...STARTER_UNITS, ...legacyOwned]) {
+    if (validIds.has(id) && !roster[id]) roster[id] = { level: 1, shards: 0 };
+  }
+  for (const u of progressionAllies(clearedMax)) {
+    if (!roster[u.id]) roster[u.id] = { level: 1, shards: 0 };
+  }
+
+  const summon = isObj(d['summon']) ? d['summon'] : {};
 
   const theta: Partial<Record<QType, number>> = {};
   if (isObj(edu['theta'])) {
@@ -136,10 +175,21 @@ export function normalize(input: unknown): SaveData {
       gradeMax: Math.floor(num(profile['gradeMax'], 4, 1, 6)),
       createdAt: str(profile['createdAt'], base.profile.createdAt),
     },
-    progress: { cleared, challengeCleared: bool(progress['challengeCleared'], false) },
-    deck: arr(d['deck'], (x) => (typeof x === 'string' ? x : null)).slice(0, 5),
+    progress: {
+      cleared,
+      maxStage: Math.max(clearedMax, Math.floor(num(progress['maxStage'], 0, 0, MAX_STAGE_KEY))),
+    },
+    // 🔴 덱은 **보유한 유닛만** 남긴다. 없는 id가 남아 있으면 출전 화면이 빈 칸을 그린다.
+    deck: arr(d['deck'], (x) => (typeof x === 'string' ? x : null))
+      .filter((id) => roster[id])
+      .slice(0, 5),
+    roster,
+    summon: {
+      sinceLegend: Math.floor(num(summon['sinceLegend'], 0, 0, PITY_LEGEND)),
+      total: Math.floor(num(summon['total'], 0, 0, 999999)),
+    },
     codex: {
-      unlocked: [...new Set(['kkachi', 'musoe', ...arr(codex['unlocked'], (x) => (typeof x === 'string' ? x : null))])],
+      unlocked: [...new Set([...STARTER_UNITS, ...legacyOwned.filter((id) => validIds.has(id)), ...Object.keys(roster)])],
     },
     currency: {
       meokmul: Math.floor(num(currency['meokmul'], 0, 0, 999999)),
@@ -176,8 +226,18 @@ export function normalize(input: unknown): SaveData {
   };
 }
 
-/** 마이그레이션 체인 — 버전이 늘어나면 여기에 단계를 추가한다 */
+/**
+ * 마이그레이션 체인.
+ *
+ * v0(버전 필드 없음) → v1 → v2 전부 `normalize()` 하나로 흡수된다:
+ *  - v1 의 `codex.unlocked` 는 보유 목록이었으므로 `roster` 로 승격된다
+ *  - v1 의 `progress.challengeCleared` 는 사라졌다(11번 도전 → 매 구역 수문장으로 대체).
+ *    버리는 필드라 별도 처리가 필요 없다 — 화이트리스트가 알아서 떨군다.
+ *  - 클리어 기록·먹물·SRS·통계·θ 시계열은 그대로 보존된다.
+ *
+ * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v2"를 만든다.
+ *    단계를 나누면 v1 판정 로직이 하나 더 생기고, 그 판정이 틀리면 기록이 날아간다.
+ */
 export function migrate(raw: unknown): SaveData {
-  // v0(버전 필드 없음) → v1: 정규화만으로 흡수된다
   return normalize(raw);
 }

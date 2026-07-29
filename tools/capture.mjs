@@ -133,6 +133,13 @@ for (const vp of VIEWPORTS) {
   // 숫자패드로 실제 입력이 되는지.
   // ⚠️ 한 자리 답 문제는 키 하나로 즉시 제출되어 식 표시가 원래대로 돌아온다 →
   //    "식이 바뀌었는가"로 판정하면 정상 동작을 실패로 오판한다. 피드백 영역 변화로 본다.
+  // 🔴 여기서 예외가 나면 나머지 뷰포트 결과가 통째로 가려진다 — 없으면 실패로 기록하고 넘어간다
+  const hasQuiz = await page.evaluate(() => !!document.querySelector('.quiz .fb'));
+  if (!hasQuiz) {
+    must(false, `[${vp.name}] 전투 화면에 문제 영역(.quiz .fb)이 없다`);
+    await page.close();
+    continue;
+  }
   const fbBefore = await page.$eval('.quiz .fb', (e) => e.textContent ?? '');
   const key = await page.$('.pad button');
   must(!!key, `[${vp.name}] 숫자패드 버튼을 찾지 못함`);

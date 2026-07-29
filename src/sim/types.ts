@@ -7,9 +7,25 @@ import type { QType } from '../edu/curriculum';
 
 export type Side = 1 | -1; // 1 = 아군(셈지기), -1 = 적(엉킴괴수)
 
+export type RarityId = 'normal' | 'rare' | 'unique' | 'epic' | 'legend';
+
+export interface RarityDef {
+  id: RarityId;
+  name: string;
+  /** 카드 테두리·글로우 색 */
+  color: string;
+  /** 승급 상한 레벨 */
+  maxLevel: number;
+  /** 소환 가중치 (합 1000 = 천분율) */
+  weight: number;
+  /** 중복으로 나왔을 때 주는 조각 수 */
+  shardOnDup: number;
+}
+
 export interface UnitDef {
   id: string;
   name: string;
+  rarity: RarityId;
   cost: number;
   hp: number;
   atk: number;
@@ -21,7 +37,7 @@ export interface UnitDef {
   spd: number;
   /** 재소환 쿨다운(초) */
   cd: number;
-  /** 해금 스테이지 */
+  /** 진도 해금 스테이지. **0 이면 소환 전용**(캠페인 진행만으로는 얻지 못한다) */
   unlock: number;
   /** 한 줄 설명(도감·덱 UI) */
   role: string;
@@ -47,12 +63,22 @@ export interface SpawnEntry {
   every: number;
   /** 한 판 총 등장 수 — 🔴 유한해야 한다(무한 스폰은 느린 플레이어에게 죽음의 나선) */
   cap: number;
+  /** 체력 보정 — 수문장이 구역마다 같은 체력을 갖게 맞춘다(기본 1) */
+  hpMul?: number;
 }
 
 export interface StageDef {
-  /** 1~10 = 필수, 11 = 선택 도전(보스) */
+  /** 1부터 무한 */
   index: number;
+  /** 구역 번호(10판 묶음) */
+  chapter: number;
+  /** 구역 안에서의 위치 1~10 */
+  pos: number;
   name: string;
+  /** 구역 이름 */
+  chapterName: string;
+  /** 배경 키 */
+  bg: string;
   /** 적 스탯 배율 */
   mult: number;
   /** 적 성 HP */
@@ -62,7 +88,10 @@ export interface StageDef {
   spawns: SpawnEntry[];
   /** 이 판에서 출제할 문항 유형 */
   quizTypes: QType[];
-  challenge: boolean;
+  /** 구역의 마지막 판(보스) */
+  boss: boolean;
+  /** 캠페인 구간(1~CAMPAIGN_STAGES) 밖 = 무한 도전 */
+  endless: boolean;
 }
 
 export interface LiveUnit {

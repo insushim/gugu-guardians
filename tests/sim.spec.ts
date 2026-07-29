@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Battle } from '../src/sim/core';
 import { stageDef, MAP_LEN, MAX_SEC } from '../src/sim/stages';
-import { ALLY_CAP, ALLY_BY_ID, defaultDeck } from '../src/sim/units';
+import { ALLY_CAP, ALLY_BY_ID, defaultDeck, progressionAllies } from '../src/sim/units';
 import { START_MONEY, REWARD, comboMul } from '../src/sim/economy';
 
 const DT = 0.1;
@@ -9,7 +9,7 @@ const DT = 0.1;
 /** 정답률 acc 로 문항을 풀며 덱에서 살 수 있는 가장 비싼 것을 소환하는 봇 */
 function playBot(stage: number, acc: number, seed = 1, maxT = MAX_SEC) {
   const b = new Battle(stageDef(stage));
-  const deck = defaultDeck(stage);
+  const deck = defaultDeck(progressionAllies(stage).map((u) => u.id));
   const cheapest = Math.min(...deck.map((id) => ALLY_BY_ID.get(id)!.cost));
   let rngState = seed >>> 0;
   const rnd = () => {
@@ -163,7 +163,7 @@ describe('전투 불변식 (헤드리스 장기 실행)', () => {
   for (const [name, stage, acc] of scenarios) {
     it(`${name}: 불변식이 깨지지 않는다`, () => {
       const b = new Battle(stageDef(stage));
-      const deck = defaultDeck(stage);
+      const deck = defaultDeck(progressionAllies(stage).map((u) => u.id));
       let t = 0;
       while (b.status === 'playing' && t < MAX_SEC) {
         if (acc > 0 && Math.floor(t * 10) % 30 === 0) b.answer(Math.random() < acc, 2500);

@@ -1,76 +1,131 @@
 import { el, btn, stars, type Teardown } from './dom';
 import * as store from '../save/store';
-import { ALLIES, DECK_SIZE, defaultDeck, unlockedAllies } from '../sim/units';
-import { ALL_STAGES, CHALLENGE_STAGE, REQUIRED_STAGES, stageDef } from '../sim/stages';
+import {
+  ALLIES, RARITIES, DECK_SIZE, defaultDeck, progressionAllies,
+  maxLevel, rarityRank, ALLY_BY_ID,
+} from '../sim/units';
+import {
+  stageDef, chapterStages, chapterOf, chapterName, CHAPTER_LEN, CAMPAIGN_STAGES,
+} from '../sim/stages';
+import {
+  SUMMON_COST, SUMMON_COST_TEN, PITY_LEGEND, probabilityTable,
+  summonOnce, summonTen, upgradeCost, canUpgrade, upgrade, type SummonResult,
+} from '../meta/summon';
+import { unitCard, rarityName, rarityColor } from './rarity';
 import { TYPE_BY_ID, type QType } from '../edu/curriculum';
 import { QuizSession } from '../edu/session';
 import { buildChoices } from '../edu/distractor';
 import { makeRng, type Question } from '../edu/generator';
-import { assetUrl } from '../render/assets';
 import { play } from '../render/audio';
 import { accuracy, automaticity, questionDensity, retention, thetaDelta, thetaDisplayable, weakTypes } from '../edu/stats';
 import type { BattleResult } from './battle';
+import type { RarityId } from '../sim/types';
 
 type Go = (screen: string, payload?: unknown) => void;
 
-const UNLOCK_COST = [40, 70, 110, 150, 200, 260];
+/** 보유 셈지기 목록 */
+function ownedIds(): string[] {
+  return Object.keys(store.load().roster);
+}
 
 function topbar(title: string, go: Go, back = 'menu'): HTMLElement {
   return el('div', { class: 'topbar' },
     btn('← 뒤로', () => go(back), 'btn sm ghost'),
     el('h1', {}, title),
     el('span', { class: 'spacer' }),
-    el('span', { class: 'muted' }, `먹물 ${store.load().currency.meokmul}`),
+    el('span', { class: 'ink' }, `먹물 ${store.load().currency.meokmul.toLocaleString('ko-KR')}`),
   );
+}
+
+function stat(k: string, v: string): HTMLElement {
+  return el('div', { class: 'stat' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v));
 }
 
 // ── 메인 메뉴 ────────────────────────────────────────────────────────────
 export function menuScreen(go: Go): { node: HTMLElement } {
   const d = store.load();
-  const cleared = Object.keys(d.progress.cleared).length;
-  const node = el('section', { class: 'screen' },
-    el('div', { class: 'pane menu' },
-      el('div', { class: 'logo' }, '구구성 수호대'),
-      el('div', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
+  const clearedN = Object.keys(d.progress.cleared).length;
+  const starN = Object.values(d.progress.cleared).reduce((s, v) => s + v, 0);
+  const owned = ownedIds().length;
+  const best = d.progress.maxStage;
+
+  const node = el('section', { class: 'screen menu-screen' },
+    el('div', { class: 'menu-hero' },
+      el('div', { class: 'crest', 'aria-hidden': 'true' }, '龜'),
+      el('h1', { class: 'logo' }, '구구성 수호대'),
+      el('p', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
+      clearedN
+        ? el('div', { class: 'menu-progress' },
+            stat('가장 멀리 간 길', best ? `${chapterOf(best)}구역 ${((best - 1) % CHAPTER_LEN) + 1}` : '—'),
+            stat('깬 길', `${clearedN}`),
+            stat('모은 별', `${starN}`),
+            stat('셈지기', `${owned}/${ALLIES.length}`),
+          )
+        : el('p', { class: 'muted' }, '문제를 맞히면 셈력이 차오르고, 셈지기가 달려 나가요.'),
       el('div', { class: 'row' },
-        btn(cleared ? '이어서 하기' : '시작하기', () => go('map'), 'btn ju'),
-        btn('셈지기 도감', () => go('codex')),
-        btn('엉킴 봉인', () => go('srs')),
+        btn(clearedN ? '이어서 하기' : '시작하기', () => go('map'), 'btn ju big'),
+        btn('셈지기 소환', () => go('summon'), 'btn gold'),
       ),
       el('div', { class: 'row' },
+        btn('셈지기 도감', () => go('codex')),
+        btn('엉킴 봉인', () => go('srs')),
         btn('내 기록', () => go('report'), 'btn nok'),
         btn('설정', () => go('settings'), 'btn ghost'),
       ),
-      el('p', { class: 'muted' }, '로그인 없이 바로 즐길 수 있어요. 기록은 이 기기에만 저장돼요.'),
+      el('p', { class: 'muted fine' }, '로그인 없이 바로 즐길 수 있어요. 기록은 이 기기에만 저장돼요.'),
     ),
   );
   return { node };
 }
 
-// ── 셈나라 지도 ──────────────────────────────────────────────────────────
-export function mapScreen(go: Go): { node: HTMLElement } {
+// ── 셈나라 지도 (무한) ───────────────────────────────────────────────────
+export function mapScreen(go: Go, payload?: unknown): { node: HTMLElement } {
   const d = store.load();
+  const reached = Math.max(1, d.progress.maxStage + 1);
+  const startChapter = typeof payload === 'number' && payload >= 1 ? Math.floor(payload) : chapterOf(reached);
+  let chapter = startChapter;
+
   const grid = el('div', { class: 'map-grid' });
-  for (const s of ALL_STAGES) {
-    const starN = d.progress.cleared[String(s.index)] ?? 0;
-    const prevCleared = s.index === 1 || (d.progress.cleared[String(s.index - 1)] ?? 0) > 0;
-    const locked = s.index === CHALLENGE_STAGE
-      ? (d.progress.cleared[String(REQUIRED_STAGES)] ?? 0) === 0
-      : !prevCleared;
-    const types = s.quizTypes.map((t) => TYPE_BY_ID.get(t)?.label ?? t).join(' · ');
-    const b = el('button', { class: `node${s.challenge ? ' challenge' : ''}`, type: 'button' },
-      el('span', { class: 'n' }, `${s.challenge ? '도전' : s.index} ${s.name}`),
-      el('span', { class: 'stars' }, starN ? stars(starN) : (locked ? '🔒' : '　')),
-      el('span', { class: 'types' }, types),
-    );
-    b.disabled = locked;
-    b.addEventListener('click', () => go('prep', s.index));
-    grid.append(b);
+  const heading = el('h2', { class: 'chapter-name' }, '');
+  const sub = el('p', { class: 'muted' }, '');
+  const prev = btn('◀ 앞 구역', () => { chapter = Math.max(1, chapter - 1); refresh(); }, 'btn sm ghost');
+  const next = btn('다음 구역 ▶', () => { chapter += 1; refresh(); }, 'btn sm ghost');
+
+  function refresh(): void {
+    const save = store.load();
+    heading.textContent = `${chapter}구역 · ${chapterName(chapter)}`;
+    const first = (chapter - 1) * CHAPTER_LEN + 1;
+    sub.textContent = first > CAMPAIGN_STAGES
+      ? '무한 도전 구역이에요. 셈지기를 더 모으고 키워야 나아갈 수 있어요.'
+      : '앞 길을 한 번이라도 깨면 다음 길이 열려요.';
+    prev.disabled = chapter <= 1;
+
+    grid.replaceChildren();
+    for (const s of chapterStages(chapter)) {
+      const key = String(s.index);
+      const starN = save.progress.cleared[key] ?? 0;
+      const locked = s.index > 1 && (save.progress.cleared[String(s.index - 1)] ?? 0) === 0;
+      const types = s.quizTypes.map((t) => TYPE_BY_ID.get(t)?.label ?? t).join(' · ');
+      const b = el('button', {
+        class: `node${s.boss ? ' boss' : ''}${s.endless ? ' endless' : ''}${starN ? ' done' : ''}`,
+        type: 'button',
+      },
+        el('span', { class: 'n' }, `${s.pos}. ${s.boss ? '수문장' : (s.name.split(' ')[1] ?? '')}`),
+        el('span', { class: 'stars' }, starN ? stars(starN) : (locked ? '🔒' : '　')),
+        el('span', { class: 'types' }, types),
+      );
+      b.disabled = locked;
+      b.addEventListener('click', () => go('prep', s.index));
+      grid.append(b);
+    }
   }
+  refresh();
+
   const node = el('section', { class: 'screen' },
     topbar('셈나라 지도', go),
     el('div', { class: 'pane' },
-      el('p', { class: 'muted' }, '앞 단계를 한 번이라도 깨면 다음 길이 열려요. 도전 단계는 안 깨도 진도에 지장 없어요.'),
+      el('div', { class: 'chapter-bar' }, prev, heading, next),
+      sub,
       grid,
     ),
   );
@@ -81,44 +136,50 @@ export function mapScreen(go: Go): { node: HTMLElement } {
 export function prepScreen(go: Go, stageIndex: number): { node: HTMLElement } {
   const d = store.load();
   const stage = stageDef(stageIndex);
-  const available = unlockedAllies(stageIndex).filter((u) => d.codex.unlocked.includes(u.id));
-  let picked = (d.deck.length ? d.deck : defaultDeck(stageIndex)).filter((id) => available.some((u) => u.id === id));
-  if (picked.length === 0) picked = available.slice(0, DECK_SIZE).map((u) => u.id);
+  const owned = ALLIES.filter((u) => d.roster[u.id])
+    .sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity) || a.cost - b.cost);
 
-  const grid = el('div', { class: 'pick-grid' });
+  let picked = (d.deck.length ? d.deck : defaultDeck(ownedIds())).filter((id) => d.roster[id]);
+  if (picked.length === 0) picked = defaultDeck(ownedIds());
+
+  const grid = el('div', { class: 'card-grid' });
   const startBtn = btn('출전!', () => {
     store.update((s) => { s.deck = picked; });
     go('battle', { stage: stageIndex, deck: picked });
-  }, 'btn ju');
+  }, 'btn ju big');
 
-  function refresh() {
+  function refresh(): void {
     grid.replaceChildren();
-    for (const u of available) {
+    for (const u of owned) {
+      const entry = d.roster[u.id]!;
       const on = picked.includes(u.id);
-      const b = el('button', { class: `pick${on ? ' sel' : ''}`, type: 'button' },
-        el('img', { src: assetUrl(u.id), alt: '' }),
-        el('span', { class: 'nm' }, u.name),
-        el('span', { class: 'co' }, `셈력 ${u.cost}`),
-        el('span', { class: 'co' }, u.role),
-      );
-      b.addEventListener('click', () => {
+      const card = unitCard(u, { level: entry.level, selected: on, compact: true });
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      const toggle = (): void => {
         if (on) picked = picked.filter((x) => x !== u.id);
         else if (picked.length < DECK_SIZE) picked.push(u.id);
+        else return;
+        play('tap');
         refresh();
+      };
+      card.addEventListener('click', toggle);
+      card.addEventListener('keydown', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') { e.preventDefault(); toggle(); }
       });
-      grid.append(b);
+      grid.append(card);
     }
     startBtn.disabled = picked.length === 0;
-    startBtn.textContent = `출전! (${picked.length}/${DECK_SIZE})`;
+    startBtn.textContent = `출전!  ${picked.length}/${DECK_SIZE}`;
   }
   refresh();
 
   const types = stage.quizTypes.map((t) => TYPE_BY_ID.get(t)?.label ?? t).join(' · ');
   const node = el('section', { class: 'screen' },
-    topbar(`${stage.index === CHALLENGE_STAGE ? '도전' : stage.index}. ${stage.name}`, go, 'map'),
+    topbar(`${stage.chapter}구역 ${stage.pos}판 · ${stage.name.split(' ')[1] ?? ''}`, go, 'map'),
     el('div', { class: 'pane' },
-      el('div', { class: 'card' },
-        el('div', {}, el('b', {}, '오늘의 문제: '), types),
+      el('div', { class: `card banner${stage.boss ? ' boss' : ''}` },
+        el('div', {}, el('b', {}, stage.boss ? '수문장이 지키는 길이에요. ' : '오늘의 문제: '), types),
         el('div', { class: 'muted' }, '문제를 맞히면 셈력이 차올라요. 틀려도 성은 다치지 않아요.'),
       ),
       el('p', { class: 'muted' }, `함께 나갈 셈지기를 ${DECK_SIZE}명까지 골라요.`),
@@ -150,8 +211,16 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
   const askLine = el('div', { class: 'muted' }, '');
   const choices = el('div', { class: 'choices' });
   const fb = el('div', { class: 'fb' }, '');
+  const seals = el('div', { class: 'seals' });
 
-  function nextQ() {
+  function drawSeals(): void {
+    seals.replaceChildren();
+    for (let i = 0; i < TOTAL; i++) {
+      seals.append(el('span', { class: `seal${i < correctN ? ' open' : i < idx ? ' miss' : ''}` }, ''));
+    }
+  }
+
+  function nextQ(): void {
     if (finished) return;
     if (idx >= TOTAL) return finish();
     q = quiz.next();
@@ -161,14 +230,13 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
     askLine.textContent = q.ask;
     fb.textContent = '';
     fb.className = 'fb';
+    drawSeals();
     const c = buildChoices(q, rng);
     choices.replaceChildren();
-    for (const v of c.options) {
-      choices.append(btn(String(v), () => pick(v), 'btn ghost'));
-    }
+    for (const v of c.options) choices.append(btn(String(v), () => pick(v), 'btn ghost'));
   }
 
-  function pick(v: number) {
+  function pick(v: number): void {
     if (!q) return;
     const res = quiz.submit(v, performance.now() - askedAt);
     for (const b of Array.from(choices.querySelectorAll('button'))) (b as HTMLButtonElement).disabled = true;
@@ -183,26 +251,35 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
       fb.textContent = `정답은 ${res.answer}. ${res.hint}`;
     }
     idx++;
+    drawSeals();
     if (timer) clearTimeout(timer);
     timer = setTimeout(nextQ, res.correct ? 700 : 1600);
   }
 
-  function finish() {
+  function finish(): void {
     if (finished) return;
     finished = true;
     if (timer) { clearTimeout(timer); timer = null; }
     const starN = correctN >= TOTAL ? 3 : correctN >= 3 ? 2 : 1;
+    let gain = 0;
+    let unlockedNow: string[] = [];
     store.update((d) => {
       const key = String(result.stage);
       const prev = d.progress.cleared[key] ?? 0;
       d.progress.cleared[key] = Math.max(prev, starN);
-      if (result.stage === CHALLENGE_STAGE) d.progress.challengeCleared = true;
-      // 먹물은 별 수에 비례 — 이미 받은 별보다 나아진 만큼만 추가로 준다(무한 파밍 방지)
+      d.progress.maxStage = Math.max(d.progress.maxStage, result.stage);
+      // 먹물은 별 수에 비례 — 이미 받은 별보다 나아진 만큼만 추가로 준다(무한 파밍 방지).
+      // 판이 깊어질수록 소환 비용 대비 보상이 유지되도록 판 번호에 비례해 늘린다.
       const table = [0, 20, 35, 60];
-      const gain = Math.max(0, (table[starN] ?? 0) - (table[prev] ?? 0));
+      const scale = 1 + (Math.min(result.stage, CAMPAIGN_STAGES) - 1) * 0.12;
+      gain = Math.round(Math.max(0, (table[starN] ?? 0) - (table[prev] ?? 0)) * scale);
       d.currency.meokmul += gain;
+      // 진도 해금 — 새로 열린 셈지기를 보유로 넣는다
+      for (const u of progressionAllies(d.progress.maxStage)) {
+        if (!d.roster[u.id]) { d.roster[u.id] = { level: 1, shards: 0 }; unlockedNow.push(u.id); }
+      }
     });
-    go('result', { ...result, starN, gateCorrect: correctN, gateTotal: TOTAL });
+    go('result', { ...result, starN, gateCorrect: correctN, gateTotal: TOTAL, meokmul: gain, unlocked: unlockedNow });
   }
 
   queueMicrotask(nextQ);
@@ -211,6 +288,7 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
   const node = el('section', { class: 'screen' },
     el('div', { class: 'topbar' }, el('h1', {}, '봉인 해제'), el('span', { class: 'spacer' }), progress),
     el('div', { class: 'pane gate-wrap' },
+      seals,
       el('p', { class: 'muted' }, '엉킴괴수가 남긴 봉인이에요. 맞힐수록 별을 더 받아요.'),
       qLine, askLine, choices, fb,
     ),
@@ -219,18 +297,39 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
 }
 
 // ── 결과 ─────────────────────────────────────────────────────────────────
-export interface ResultPayload extends BattleResult { starN: number; gateCorrect: number; gateTotal: number }
+export interface ResultPayload extends BattleResult {
+  starN: number;
+  gateCorrect: number;
+  gateTotal: number;
+  meokmul?: number;
+  unlocked?: string[];
+}
 
 export function resultScreen(go: Go, r: ResultPayload): { node: HTMLElement } {
   const density = questionDensity(r.answerMs, r.seconds * 1000);
   const acc = r.solved ? Math.round((r.correct / r.solved) * 100) : 0;
-  const next = r.stage < CHALLENGE_STAGE ? r.stage + 1 : null;
   const won = r.status === 'win';
+  const next = won ? r.stage + 1 : null;
+
+  const gained = r.unlocked?.length
+    ? el('div', { class: 'card gain' },
+        el('b', {}, '새 셈지기가 합류했어요!'),
+        el('div', { class: 'card-grid mini' },
+          ...r.unlocked.map((id) => {
+            const u = ALLY_BY_ID.get(id);
+            return u ? unitCard(u, { level: 1, compact: true, reveal: true }) : el('span', {}, '');
+          })),
+      )
+    : null;
 
   const node = el('section', { class: 'screen' },
-    el('div', { class: 'topbar' }, el('h1', {}, won ? '이겼다!' : r.status === 'draw' ? '시간이 다 됐어요' : '아쉬워요'), el('span', { class: 'spacer' })),
+    el('div', { class: 'topbar' },
+      el('h1', {}, won ? '이겼다!' : r.status === 'draw' ? '시간이 다 됐어요' : '아쉬워요'),
+      el('span', { class: 'spacer' }),
+    ),
     el('div', { class: 'pane gate-wrap' },
       el('div', { class: 'stars-big' }, stars(r.starN)),
+      r.meokmul ? el('div', { class: 'ink big' }, `먹물 +${r.meokmul}`) : el('span', {}, ''),
       el('div', { class: 'result-stats' },
         stat('푼 문제', `${r.solved}`),
         stat('정답률', `${acc}%`),
@@ -238,63 +337,152 @@ export function resultScreen(go: Go, r: ResultPayload): { node: HTMLElement } {
         stat('걸린 시간', `${Math.round(r.seconds)}초`),
         stat('문제 시간 비율', `${Math.round(density * 100)}%`),
       ),
+      ...(gained ? [gained] : []),
       el('p', { class: 'muted' }, won
         ? '문제를 빨리 풀수록 셈지기가 더 빨리 나와요.'
         : '괜찮아요. 다시 도전하면 아까 틀린 문제가 먼저 나와요.'),
       el('div', { class: 'row' },
         btn('다시 하기', () => go('prep', r.stage), 'btn ghost'),
         next ? btn('다음 길로', () => go('prep', next), 'btn ju') : btn('지도로', () => go('map'), 'btn ju'),
-        btn('지도', () => go('map'), 'btn ghost'),
+        btn('소환하기', () => go('summon'), 'btn gold'),
       ),
     ),
   );
   return { node };
 }
 
-function stat(k: string, v: string): HTMLElement {
-  return el('div', { class: 'stat' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v));
+// ── 소환(뽑기) ───────────────────────────────────────────────────────────
+export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown } {
+  let timers: ReturnType<typeof setTimeout>[] = [];
+  const clearTimers = (): void => { timers.forEach(clearTimeout); timers = []; };
+
+  const purse = el('div', { class: 'ink big' }, '');
+  const pityLine = el('div', { class: 'muted' }, '');
+  const stage = el('div', { class: 'summon-stage' });
+  const one = btn(`한 번 소환 · 먹물 ${SUMMON_COST}`, () => doSummon(1), 'btn');
+  const ten = btn(`열 번 소환 · 먹물 ${SUMMON_COST_TEN}`, () => doSummon(10), 'btn gold big');
+
+  function refreshHead(): void {
+    const d = store.load();
+    purse.textContent = `먹물 ${d.currency.meokmul.toLocaleString('ko-KR')}`;
+    const left = PITY_LEGEND - d.summon.sinceLegend;
+    pityLine.textContent = `전설 확정까지 ${left}번 · 지금까지 ${d.summon.total}번 소환`;
+    one.disabled = d.currency.meokmul < SUMMON_COST;
+    ten.disabled = d.currency.meokmul < SUMMON_COST_TEN;
+  }
+
+  function doSummon(n: number): void {
+    const cost = n === 10 ? SUMMON_COST_TEN : SUMMON_COST;
+    const d = store.load();
+    if (d.currency.meokmul < cost) return;
+
+    let results: SummonResult[] = [];
+    store.update((s) => {
+      s.currency.meokmul -= cost;
+      const rng = () => Math.random();
+      results = n === 10 ? summonTen(s.roster, s.summon, rng) : [summonOnce(s.roster, s.summon, rng)];
+    });
+    play('summon');
+
+    // 등급 낮은 것부터 차례로 열어 마지막에 좋은 게 나오게 한다(연출)
+    const order = [...results].sort((a, b) => rarityRank(a.rarity) - rarityRank(b.rarity));
+    stage.replaceChildren();
+    clearTimers();
+    order.forEach((res, i) => {
+      timers.push(setTimeout(() => {
+        const card = unitCard(res.unit, { level: 1, reveal: true, compact: true });
+        const tagText = res.isNew ? 'NEW' : `조각 +${res.shards}`;
+        card.append(el('span', { class: `ucard-tag${res.isNew ? ' new' : ''}` }, tagText));
+        stage.append(card);
+        if (rarityRank(res.rarity) >= 3) play('win');
+        refreshHead();
+      }, i * 220));
+    });
+    timers.push(setTimeout(refreshHead, order.length * 220 + 50));
+  }
+
+  refreshHead();
+
+  const rateRows = probabilityTable().map((r) => {
+    const row = el('div', { class: 'rate-row' },
+      el('span', { class: 'rate-name' }, r.name),
+      el('span', { class: 'rate-bar' }, el('i', {})),
+      el('span', { class: 'rate-pct' }, `${r.percent}%`),
+    );
+    const fill = row.querySelector('i') as HTMLElement;
+    fill.style.width = `${Math.max(3, r.percent)}%`;
+    fill.style.background = rarityColor(r.id);
+    return row;
+  });
+
+  const node = el('section', { class: 'screen' },
+    topbar('셈지기 소환', go),
+    el('div', { class: 'pane' },
+      el('div', { class: 'card summon-head' },
+        purse, pityLine,
+        el('div', { class: 'muted' }, '먹물은 문제를 맞혀야 모여요. 현금으로는 살 수 없어요.'),
+      ),
+      stage,
+      el('div', { class: 'row' }, one, ten),
+      el('details', { class: 'card rates' },
+        el('summary', {}, '나올 확률 보기'),
+        ...rateRows,
+        el('p', { class: 'muted fine' }, `열 번 소환에는 유니크 이상이 반드시 하나 들어가고, ${PITY_LEGEND}번 안에 전설이 반드시 나와요.`),
+      ),
+    ),
+  );
+  return { node, teardown: clearTimers };
 }
 
-// ── 도감 ─────────────────────────────────────────────────────────────────
+// ── 도감 (등급별) ────────────────────────────────────────────────────────
 export function codexScreen(go: Go): { node: HTMLElement } {
-  const grid = el('div', { class: 'codex-grid' });
-  function refresh() {
+  const wrap = el('div', { class: 'codex-wrap' });
+
+  function refresh(): void {
     const d = store.load();
-    grid.replaceChildren();
-    let lockedIdx = 0;
-    for (const u of ALLIES) {
-      const has = d.codex.unlocked.includes(u.id);
-      const cost = UNLOCK_COST[lockedIdx] ?? 300;
-      const box = el('div', { class: `cx${has ? '' : ' locked'}` },
-        el('img', { src: assetUrl(u.id), alt: '' }),
-        el('div', {}, el('b', {}, u.name)),
-        el('div', { class: 'muted' }, u.role),
-        el('div', { class: 'muted' }, `셈력 ${u.cost} · ${u.unlock}번째 길부터`),
+    wrap.replaceChildren();
+    for (const r of [...RARITIES].reverse()) {
+      const list = ALLIES.filter((u) => u.rarity === r.id);
+      const have = list.filter((u) => d.roster[u.id]).length;
+      const head = el('div', { class: 'codex-head' },
+        el('span', { class: 'chip' }, r.name),
+        el('span', { class: 'muted' }, `${have} / ${list.length}`),
       );
-      if (!has) {
-        const canBuy = d.currency.meokmul >= cost;
-        const b = btn(`먹물 ${cost}로 데려오기`, () => {
-          store.update((s) => {
-            if (s.currency.meokmul >= cost && !s.codex.unlocked.includes(u.id)) {
-              s.currency.meokmul -= cost;
-              s.codex.unlocked.push(u.id);
-            }
-          });
-          refresh();
-        }, 'btn sm');
-        b.disabled = !canBuy;
-        box.append(b);
-        lockedIdx++;
+      (head.firstChild as HTMLElement).style.setProperty('--rc', r.color);
+
+      const grid = el('div', { class: 'card-grid' });
+      for (const u of list) {
+        const entry = d.roster[u.id];
+        const card = unitCard(u, { level: entry?.level, owned: !!entry, compact: true });
+        if (entry) {
+          const max = maxLevel(u.rarity);
+          const cost = upgradeCost(entry.level + 1);
+          if (entry.level >= max) {
+            card.append(el('div', { class: 'up done' }, '최고 단계'));
+          } else {
+            const b = btn(`승급 · 조각 ${entry.shards}/${cost}`, () => {
+              store.update((s) => { upgrade(u, s.roster[u.id]); });
+              play('correct');
+              refresh();
+            }, 'btn sm up');
+            b.disabled = !canUpgrade(u, entry);
+            card.append(b);
+          }
+        } else {
+          card.append(el('div', { class: 'up' }, u.unlock >= 1 ? `${u.unlock}번째 길에서 합류` : '소환으로만 만나요'));
+        }
+        grid.append(card);
       }
-      grid.append(box);
+      wrap.append(head, grid);
     }
   }
   refresh();
+
   const node = el('section', { class: 'screen' },
     topbar('셈지기 도감', go),
     el('div', { class: 'pane' },
-      el('p', { class: 'muted' }, '별을 모아 받은 먹물로 새 셈지기를 데려올 수 있어요. 힘은 길을 나아가면 저절로 세져요.'),
-      grid,
+      el('p', { class: 'muted' }, '같은 셈지기를 또 만나면 조각이 돼요. 조각을 모으면 승급해서 더 강해져요.'),
+      wrap,
     ),
   );
   return { node };
@@ -328,9 +516,10 @@ export function srsScreen(go: Go): { node: HTMLElement } {
         el('div', { class: 'muted' }, '한 번 틀린 문제는 다음 판에서 먼저 나와요. 두 번 연달아 맞히면 한 단계 올라가요.'),
       ),
       items.length
-        ? el('table', { class: 'rep' },
-            el('thead', {}, el('tr', {}, el('th', {}, '갈래'), el('th', {}, '문제'), el('th', {}, '단계'), el('th', {}, '다음 날'))),
-            el('tbody', {}, ...rows))
+        ? el('div', { class: 'tablewrap' },
+            el('table', { class: 'rep' },
+              el('thead', {}, el('tr', {}, el('th', {}, '갈래'), el('th', {}, '문제'), el('th', {}, '단계'), el('th', {}, '다음 날'))),
+              el('tbody', {}, ...rows)))
         : el('p', { class: 'muted' }, '아직 봉인된 문제가 없어요. 한 판 놀고 와요!'),
     ),
   );
@@ -367,7 +556,7 @@ export function reportScreen(go: Go): { node: HTMLElement } {
         stat('푼 문제(전체)', String(totalAttempts)),
         stat('논 판 수', String(d.edu.rounds)),
         stat('문제 시간 비율', `${Math.round(density * 100)}%`),
-        stat('되찾은 수', String(d.currency.recovered)),
+        stat('가장 멀리 간 길', String(d.progress.maxStage)),
         stat('오래 기억한 비율', d.edu.retentionLog.length ? `${Math.round(ret * 100)}%` : '측정 중'),
       ),
       el('div', { class: 'card' },
@@ -375,10 +564,11 @@ export function reportScreen(go: Go): { node: HTMLElement } {
         el('div', {}, weak.length ? weak.map((t) => TYPE_BY_ID.get(t)?.label ?? t).join(' · ') : '아직 판단하기 일러요(문제를 더 풀어 봐요)'),
       ),
       rows.length
-        ? el('table', { class: 'rep' },
-            el('thead', {}, el('tr', {},
-              el('th', {}, '갈래'), el('th', {}, '푼 수'), el('th', {}, '정답률'), el('th', {}, '빠르고 정확'), el('th', {}, '4주 변화'))),
-            el('tbody', {}, ...rows))
+        ? el('div', { class: 'tablewrap' },
+            el('table', { class: 'rep' },
+              el('thead', {}, el('tr', {},
+                el('th', {}, '갈래'), el('th', {}, '푼 수'), el('th', {}, '정답률'), el('th', {}, '빠르고 정확'), el('th', {}, '4주 변화'))),
+              el('tbody', {}, ...rows)))
         : el('p', { class: 'muted' }, '아직 기록이 없어요.'),
       el('p', { class: 'muted' }, '이 기록은 이 기기에만 저장돼요. 어디로도 보내지 않아요.'),
     ),
@@ -389,19 +579,24 @@ export function reportScreen(go: Go): { node: HTMLElement } {
 // ── 설정 ─────────────────────────────────────────────────────────────────
 export function settingsScreen(go: Go): { node: HTMLElement } {
   const d = store.load();
-  const applyFont = (v: number) => document.documentElement.style.setProperty('--fs', String(v));
+  const applyFont = (v: number): void => document.documentElement.style.setProperty('--fs', String(v));
 
   const fontRow = el('div', { class: 'row' });
   for (const [label, v] of [['보통', 1], ['크게', 1.2], ['아주 크게', 1.5]] as [string, 1 | 1.2 | 1.5][]) {
-    const b = btn(label, () => {
+    fontRow.append(btn(label, () => {
       store.update((s) => { s.settings.fontScale = v; });
       applyFont(v);
-    }, `btn sm ${d.settings.fontScale === v ? '' : 'ghost'}`);
-    fontRow.append(b);
+      go('settings');
+    }, `btn sm ${d.settings.fontScale === v ? '' : 'ghost'}`));
   }
 
   const motion = btn(d.settings.reduceMotion ? '움직임 줄이기: 켜짐' : '움직임 줄이기: 꺼짐', () => {
     store.update((s) => { s.settings.reduceMotion = !s.settings.reduceMotion; });
+    go('settings');
+  }, 'btn sm');
+
+  const sound = btn(d.settings.sound ? '소리: 켜짐' : '소리: 꺼짐', () => {
+    store.update((s) => { s.settings.sound = !s.settings.sound; });
     go('settings');
   }, 'btn sm');
 
@@ -413,7 +608,7 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
     topbar('설정', go),
     el('div', { class: 'pane' },
       el('div', { class: 'card' }, el('b', {}, '글자 크기'), fontRow),
-      el('div', { class: 'card' }, el('b', {}, '움직임'), el('div', {}, motion)),
+      el('div', { class: 'card' }, el('b', {}, '움직임과 소리'), el('div', { class: 'row' }, motion, sound)),
       el('div', { class: 'card' },
         el('b', {}, '내 별명'), el('div', {}, d.profile.nickname),
         el('div', { class: 'muted' }, '이름 대신 쓰는 별명이에요. 아무 정보도 보내지 않아요.'),
@@ -428,4 +623,9 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
 function confirmTwice(): boolean {
   return globalThis.confirm('정말 모두 지울까요? 되돌릴 수 없어요.')
     && globalThis.confirm('마지막 확인이에요. 정말 지울까요?');
+}
+
+/** 등급 이름을 외부에서 쓸 때 (도감 정렬 라벨 등) */
+export function labelOfRarity(r: RarityId): string {
+  return rarityName(r);
 }

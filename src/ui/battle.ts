@@ -1,6 +1,7 @@
 import { Battle } from '../sim/core';
 import { stageDef, stageBackground, MAX_SEC } from '../sim/stages';
 import { ALLY_BY_ID } from '../sim/units';
+import { rarityColor } from './rarity';
 import { MIN_ANSWER_MS } from '../sim/economy';
 import { FieldRenderer } from '../render/field';
 import { assetUrl } from '../render/assets';
@@ -32,7 +33,10 @@ export interface BattleResult {
 export function buildBattle(stageIndex: number, deck: string[], onDone: (r: BattleResult) => void): { node: HTMLElement; teardown: Teardown } {
   const save = store.load();
   const stage = stageDef(stageIndex);
-  const battle = new Battle(stage);
+  // 승급 레벨을 그대로 넘긴다 — 도감에서 키운 셈지기가 전장에서도 세져야 한다
+  const levels: Record<string, number> = {};
+  for (const [id, e] of Object.entries(save.roster)) levels[id] = e.level;
+  const battle = new Battle(stage, levels);
   const quiz = new QuizSession({ layer: 'L1', types: stage.quizTypes, save, seed: Date.now() % 100000 });
 
   // ── DOM ────────────────────────────────────────────────────────────────
@@ -54,12 +58,18 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     const def = ALLY_BY_ID.get(id)!;
     const cool = el('div', { class: 'cool' }, '');
     const why = el('div', { class: 'why' }, '셈력 부족');
-    const card = el('button', { class: 'dcard', type: 'button', 'aria-label': `${def.name} 소환, 셈력 ${def.cost}` },
+    const lv = save.roster[id]?.level ?? 1;
+    const card = el('button', {
+      class: `dcard r-${def.rarity}`, type: 'button',
+      'aria-label': `${def.name} 소환, 셈력 ${def.cost}${lv > 1 ? `, ${lv}단계` : ''}`,
+    },
       el('img', { src: assetUrl(id), alt: '' }),
       el('span', { class: 'nm' }, def.name),
       el('span', { class: 'cost' }, `${def.cost}`),
+      lv > 1 ? el('span', { class: 'lv' }, `${lv}`) : el('span', {}, ''),
       cool, why,
     );
+    card.style.setProperty('--rc', rarityColor(def.rarity));
     card.addEventListener('click', () => {
       if (battle.summon(id)) { renderer.shake(2); flash(card); play('summon'); }
     });

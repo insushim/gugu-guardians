@@ -14,6 +14,12 @@
   --shadow: 0 2px 0 #221d1a;
   --fs: 1;              /* 글자 크기 배율(설정에서 변경) */
   --radius: 14px;
+  --gold: #c8a02c;      /* 금박 — 소환·전설 전용. 아껴 쓴다 */
+  --rc: #7a8b99;        /* 카드별 등급 색이 여기 들어온다 */
+  /* 한지 결 — 이미지 없이 종이 질감만 낸다(번들 0바이트) */
+  --hanji-tex:
+    repeating-linear-gradient(90deg, rgba(150,120,80,.045) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(0deg, rgba(150,120,80,.035) 0 1px, transparent 1px 4px);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -43,6 +49,19 @@ body {
 .btn.nok { background: var(--nok); }
 .btn.ghost { background: var(--hanji); color: var(--meok); }
 .btn.sm { min-height: 60px; padding: 0 16px; font-size: .85em; }
+.btn.big { min-height: 96px; padding: 0 30px; font-size: 1.06em; }
+.btn.gold {
+  background: linear-gradient(170deg, #f0d98a 0%, var(--gold) 55%, #9c7a18 100%);
+  color: #2b2208; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+}
+.btn:focus-visible, .node:focus-visible, .ucard:focus-visible {
+  outline: 4px solid var(--cheong); outline-offset: 3px;
+}
+.ink { font-weight: 900; font-variant-numeric: tabular-nums; color: var(--gold); }
+.topbar .ink { color: #f2dc9a; }
+.ink.big { font-size: 1.5em; }
+.fine { font-size: .74em; }
+.tablewrap { overflow-x: auto; }
 
 .screen { height: 100%; width: 100%; display: none; flex-direction: column; }
 .screen.on { display: flex; }
@@ -56,7 +75,7 @@ body {
 .topbar .muted { color: #d8e6f5; }   /* 파란 배경 위 가독성 */
 .topbar .spacer { flex: 1; }
 
-.pane { flex: 1; overflow-y: auto; padding: 18px; background: var(--hanji); }
+.pane { flex: 1; overflow-y: auto; padding: 18px; background: var(--hanji); background-image: var(--hanji-tex); }
 /* 🔴 주 행동 버튼은 낮은 화면에서도 항상 손에 닿아야 한다(스크롤해야 보이면 못 찾는다) */
 .actionbar {
   flex: 0 0 auto; display: flex; gap: 12px; justify-content: center; align-items: center;
@@ -70,37 +89,103 @@ body {
 .big-num { font-size: 1.9em; font-weight: 900; font-variant-numeric: tabular-nums; }
 
 /* ── 메인 메뉴 ─────────────────────────────────────────────────────── */
-.menu { display: grid; place-content: center; gap: 16px; text-align: center; padding: 24px; }
-.menu .logo { font-size: 2.6em; font-weight: 900; color: var(--ju); letter-spacing: -.03em; }
-.menu .tag { color: var(--meok-soft); margin-bottom: 8px; }
-.menu .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.menu-screen { background: var(--hanji); background-image: var(--hanji-tex); overflow-y: auto; }
+.menu-hero {
+  margin: auto; display: grid; justify-items: center; gap: 14px;
+  text-align: center; padding: 28px 20px; max-width: 760px;
+}
+.menu-hero .crest {
+  width: 84px; height: 84px; display: grid; place-items: center;
+  font-size: 44px; color: var(--hanji); background: var(--ju);
+  border: 4px solid var(--line); border-radius: 50%; box-shadow: var(--shadow);
+}
+.menu-hero .logo {
+  font-size: clamp(34px, 7vh, 62px); font-weight: 900; color: var(--ju);
+  letter-spacing: -.03em; margin: 0; text-wrap: balance;
+}
+.menu-hero .tag { color: var(--meok-soft); margin: 0; }
+.menu-hero .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.menu-progress { display: grid; grid-template-columns: repeat(4, minmax(84px, 1fr)); gap: 8px; width: 100%; }
+.menu-progress .stat { padding: 8px 6px; }
+.menu-progress .v { font-size: 1.1em; }
 
 /* ── 셈나라 지도 ───────────────────────────────────────────────────── */
-.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.chapter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.chapter-name { flex: 1; text-align: center; font-size: 1.15em; margin: 0; letter-spacing: -.02em; }
+.map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 10px; }
 .node {
   background: #fff; border: 3px solid var(--line); border-radius: var(--radius);
   padding: 12px; text-align: left; font: inherit; cursor: pointer; box-shadow: var(--shadow);
-  min-height: 96px; display: flex; flex-direction: column; gap: 4px;
+  min-height: 96px; display: flex; flex-direction: column; gap: 4px; position: relative;
 }
 .node:active { transform: translateY(2px); box-shadow: none; }
 .node[disabled] { opacity: .5; cursor: default; }
 .node .n { font-weight: 900; }
 .node .stars { color: var(--hwang); letter-spacing: 2px; font-size: 1.1em; }
 .node .types { font-size: .72em; color: var(--meok-soft); }
-.node.challenge { background: #2b2320; color: var(--hanji); }
-.node.challenge .types { color: #c9bfb5; }
+.node.done { background: linear-gradient(180deg, #fff 0%, #f4ecdb 100%); }
+.node.boss { background: #2b2320; color: var(--hanji); border-color: #000; }
+.node.boss .types { color: #c9bfb5; }
+.node.boss .n::before { content: '⚔ '; color: var(--hwang); }
+.node.endless { border-style: double; border-width: 6px; }
 
-/* ── 출전 준비 ─────────────────────────────────────────────────────── */
-.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-.pick {
-  border: 3px solid var(--line); border-radius: var(--radius); background: #fff;
-  padding: 8px; min-height: 118px; cursor: pointer; font: inherit; text-align: center;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+/* ── 등급 카드 (도감·출전·소환 공용) ───────────────────────────────── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 12px; }
+.card-grid.mini { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+
+.ucard {
+  position: relative; background: #fff; border: 3px solid var(--rc); border-radius: var(--radius);
+  padding: 10px 8px 8px; text-align: center; cursor: pointer; overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px; box-shadow: 0 2px 0 var(--line);
 }
-.pick img { width: 56px; height: 56px; object-fit: contain; }
-.pick.sel { background: var(--hwang); border-width: 5px; }
-.pick .nm { font-weight: 800; font-size: .8em; }
-.pick .co { font-size: .72em; color: var(--meok-soft); }
+.ucard::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rc) 16%, transparent) 0%, transparent 46%);
+}
+.ucard-rarity {
+  align-self: center; font-size: .62em; font-weight: 900; letter-spacing: .08em;
+  color: #fff; background: var(--rc); border-radius: 999px; padding: 2px 10px;
+}
+.ucard-art { height: 76px; display: grid; place-items: center; }
+.ucard-art img { max-width: 100%; max-height: 76px; object-fit: contain; }
+.ucard-name { font-weight: 900; font-size: .86em; }
+.ucard-role { font-size: .66em; color: var(--meok-soft); min-height: 2.1em; }
+.ucard-foot { display: flex; justify-content: space-between; font-size: .68em; font-weight: 800; }
+.ucard-cost { color: var(--cheong); font-variant-numeric: tabular-nums; }
+.ucard-lv { color: var(--meok-soft); font-variant-numeric: tabular-nums; }
+.ucard-bar { height: 6px; background: #e6ded1; border-radius: 3px; overflow: hidden; }
+.ucard-bar > i { display: block; height: 100%; background: var(--rc); }
+.ucard.sel { border-width: 6px; background: #fffaea; }
+.ucard.sel::after {
+  content: '출전'; position: absolute; top: 6px; right: 6px; font-size: .6em; font-weight: 900;
+  background: var(--ju); color: #fff; border-radius: 999px; padding: 2px 8px;
+}
+.ucard.unowned { filter: grayscale(1); opacity: .5; }
+.ucard.unowned .ucard-art img { filter: brightness(0); opacity: .35; }
+.ucard.compact .ucard-art { height: 62px; }
+.ucard.compact .ucard-art img { max-height: 62px; }
+.ucard .up { font-size: .62em; color: var(--meok-soft); margin-top: 2px; }
+.ucard .btn.up { min-height: 44px; width: 100%; font-size: .66em; padding: 0 6px; }
+.ucard .up.done { color: var(--gold); font-weight: 900; }
+.ucard-tag {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 6px;
+  font-size: .6em; font-weight: 900; white-space: nowrap;
+  background: var(--meok); color: #fff; border-radius: 999px; padding: 2px 10px;
+}
+.ucard-tag.new { background: var(--ju); }
+
+/* 전설만 은은하게 빛난다 — 흔하면 특별해 보이지 않는다 */
+.ucard.r-legend { background: linear-gradient(180deg, #fffdf3 0%, #fff 60%); }
+.ucard.r-legend::before {
+  background:
+    linear-gradient(180deg, rgba(200,160,44,.28) 0%, transparent 50%),
+    radial-gradient(circle at 50% 12%, rgba(255,231,150,.55), transparent 62%);
+}
+.ucard.reveal { animation: pop .34s cubic-bezier(.2,1.4,.5,1); }
+@keyframes pop { from { transform: scale(.72); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.banner.boss { background: #2b2320; color: var(--hanji); }
+.banner.boss .muted { color: #c9bfb5; }
 
 /* ── 전투 ──────────────────────────────────────────────────────────── */
 .battle { background: #0f0d0c; }
@@ -128,6 +213,11 @@ body {
 .dcard img { width: 46px; height: 46px; object-fit: contain; pointer-events: none; }
 .dcard .cost { font-size: .62em; font-weight: 900; font-variant-numeric: tabular-nums; }
 .dcard .nm { font-size: .58em; font-weight: 700; }
+.dcard { border-color: var(--rc, #000); }
+.dcard .lv {
+  position: absolute; top: 2px; right: 3px; font-size: .5em; font-weight: 900;
+  background: var(--rc, #000); color: #fff; border-radius: 999px; padding: 0 5px;
+}
 .dcard.locked { filter: grayscale(1) brightness(.75); }
 .dcard .cool {
   position: absolute; inset: 0; background: rgba(20,16,14,.72); color: #fff;
@@ -175,8 +265,40 @@ canvas#field { flex: 1 1 auto; display: block; width: 100%; height: 100%; image-
 .pad button:active { background: var(--hwang); }
 .pad button.wide { background: #ddd2c4; font-size: clamp(14px, 2.2vh, 20px); }
 
-/* 낮은 화면(모바일 가로, 주소창 제외 ≈310px)에서는 숫자패드를 2행 6열로 접는다 */
+/* 낮은 화면(모바일 가로, 주소창 제외 ≈310px) 대응 */
 @media (max-height: 430px) {
+  /* 🔴 메뉴가 세로로 길면 주 버튼이 화면 밖으로 나간다 — 실측(900×310)에서 '시작하기'가
+     아예 보이지 않아 게임을 시작할 수 없었다. 장식부터 줄이고 버튼을 살린다. */
+  .menu-hero { gap: 6px; padding: 10px 14px; }
+  .menu-hero .crest { width: 44px; height: 44px; font-size: 24px; border-width: 3px; }
+  .menu-hero .logo { font-size: 26px; }
+  .menu-hero .tag { font-size: .72em; }
+  .menu-hero .fine, .menu-hero > p.muted:not(.fine) { display: none; }
+  .menu-hero .btn { min-height: 46px; padding: 0 14px; font-size: .78em; }
+  .menu-hero .btn.big { min-height: 54px; padding: 0 20px; font-size: .86em; }
+  .menu-progress { gap: 5px; }
+  .menu-progress .stat { padding: 4px; border-width: 2px; }
+  .menu-progress .k { font-size: .58em; }
+  .menu-progress .v { font-size: .8em; }
+  /* 지도·도감·소환도 같은 이유로 촘촘하게 */
+  .map-grid { grid-template-columns: repeat(auto-fill, minmax(122px, 1fr)); gap: 7px; }
+  .node { min-height: 66px; padding: 7px; }
+  .node .types { font-size: .62em; }
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 7px; }
+  .ucard { padding: 6px 5px 5px; }
+  .ucard-art, .ucard.compact .ucard-art { height: 40px; }
+  .ucard-art img, .ucard.compact .ucard-art img { max-height: 40px; }
+  .ucard-role { font-size: .58em; min-height: 1.8em; }
+  .summon-stage { min-height: 110px; padding: 7px; }
+  .pane { padding: 10px; }
+  .card { padding: 9px; margin-bottom: 8px; }
+  .actionbar { padding: 5px 10px; }
+  .actionbar .btn.big { min-height: 50px; font-size: .84em; }
+  .gate-wrap { gap: 8px; padding: 8px; }
+  .gate-q { font-size: 1.35em; }
+  .choices button { min-height: 48px; font-size: 1em; }
+  .stars-big { font-size: 1.7em; }
+
   .bhud { padding: 2px 8px; font-size: .7em; }
   .gauge { flex-basis: 130px; height: 18px; }
   .deck-col { flex-basis: 84px; padding: 4px; gap: 4px; }
@@ -207,11 +329,44 @@ canvas#field { flex: 1 1 auto; display: block; width: 100%; height: 100%; image-
 .stat .k { font-size: .7em; color: var(--meok-soft); }
 .stat .v { font-size: 1.5em; font-weight: 900; font-variant-numeric: tabular-nums; }
 
+/* ── 소환 ──────────────────────────────────────────────────────────── */
+.summon-head { display: grid; gap: 4px; text-align: center; }
+.summon-stage {
+  min-height: 190px; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px; padding: 12px; margin-bottom: 14px;
+  background: #2b2320; background-image: radial-gradient(circle at 50% 0%, #43352c, #201a17 70%);
+  border: 3px solid var(--line); border-radius: var(--radius); align-content: start;
+}
+.summon-stage .ucard { padding-bottom: 26px; }
+.summon-stage:empty::after {
+  content: '먹물을 써서 셈지기를 불러요'; grid-column: 1 / -1;
+  color: #a99a8c; text-align: center; align-self: center; font-size: .82em;
+}
+.rates { padding: 12px 16px; }
+.rates summary { font-weight: 800; cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.rate-row { display: grid; grid-template-columns: 4.2em 1fr 3.4em; align-items: center; gap: 10px; margin: 6px 0; }
+.rate-name { font-size: .78em; font-weight: 800; }
+.rate-bar { height: 12px; background: #e6ded1; border-radius: 6px; overflow: hidden; }
+.rate-bar > i { display: block; height: 100%; }
+.rate-pct { font-size: .76em; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── 봉인 표시 ─────────────────────────────────────────────────────── */
+.seals { display: flex; gap: 8px; justify-content: center; }
+.seal {
+  width: 26px; height: 26px; border: 3px solid var(--line); border-radius: 50%;
+  background: #e6ded1;
+}
+.seal.open { background: var(--hwang); }
+.seal.miss { background: #c9bfb5; }
+.gain { text-align: center; }
+
 /* ── 도감/오답봉인/리포트 ──────────────────────────────────────────── */
-.codex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
-.cx { background: #fff; border: 3px solid var(--line); border-radius: var(--radius); padding: 12px; text-align: center; }
-.cx img { width: 76px; height: 76px; object-fit: contain; }
-.cx.locked { opacity: .45; }
+.codex-wrap { display: grid; gap: 8px; }
+.codex-head { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.chip {
+  font-size: .74em; font-weight: 900; color: #fff; background: var(--rc);
+  border-radius: 999px; padding: 4px 14px; border: 2px solid var(--line);
+}
 .bar { height: 16px; background: #e6ded1; border: 2px solid var(--line); border-radius: 8px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--nok); }
 table.rep { width: 100%; border-collapse: collapse; font-size: .82em; }

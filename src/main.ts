@@ -4,7 +4,7 @@ import { loadAll } from './render/assets';
 import { installUnlockHooks } from './render/audio';
 import { buildBattle, type BattleResult } from './ui/battle';
 import {
-  menuScreen, mapScreen, prepScreen, gateScreen, resultScreen,
+  menuScreen, mapScreen, prepScreen, gateScreen, resultScreen, summonScreen,
   codexScreen, srsScreen, reportScreen, settingsScreen, type ResultPayload,
 } from './ui/screens';
 import * as store from './save/store';
@@ -44,7 +44,10 @@ function go(screen: string, payload?: unknown): void {
       mount(root, () => menuScreen(go));
       break;
     case 'map':
-      mount(root, () => mapScreen(go));
+      mount(root, () => mapScreen(go, payload));
+      break;
+    case 'summon':
+      mount(root, () => summonScreen(go));
       break;
     case 'prep':
       mount(root, () => prepScreen(go, Number(payload)));

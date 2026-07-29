@@ -122,11 +122,47 @@ const statN = Object.keys(result.save?.data?.edu?.stats ?? {}).length;
 must(statN > 0, '학습 통계가 저장되지 않음');
 must((result.save?.data?.edu?.playMs ?? 0) > 0, '플레이 시간이 기록되지 않음 (문항 밀도 계산 불가)');
 
+// ── 소환: 재화를 쓰고 보유가 늘고 저장되는가 ──────────────────────────────
+// 🔴 여기서 저장이 안 되면 아이 입장에서는 "뽑은 셈지기가 사라진" 것이 된다.
+await page.evaluate(() => {
+  const raw = JSON.parse(localStorage.getItem('gugu:save'));
+  raw.data.currency.meokmul = 5000;
+  localStorage.setItem('gugu:save', JSON.stringify(raw));
+});
+await page.reload({ waitUntil: 'networkidle2' });
+await page.waitForFunction('window.__gugu__?.ready');
+must(await clickText('셈지기 소환'), '소환 화면으로 못 감');
+await sleep(400);
+const before = await page.evaluate(() => {
+  const d = JSON.parse(localStorage.getItem('gugu:save')).data;
+  return { ink: d.currency.meokmul, owned: Object.keys(d.roster).length };
+});
+must(await clickText('열 번 소환'), '10연 버튼 없음');
+await sleep(3200);
+await page.screenshot({ path: join(OUT, 'e2e-4-summon.png') });
+const after = await page.evaluate(() => {
+  const d = JSON.parse(localStorage.getItem('gugu:save')).data;
+  return {
+    ink: d.currency.meokmul,
+    owned: Object.keys(d.roster).length,
+    cards: document.querySelectorAll('.summon-stage .ucard').length,
+    total: d.summon.total,
+    shards: Object.values(d.roster).reduce((s, e) => s + e.shards, 0),
+  };
+});
+must(after.cards === 10, `소환 결과 카드가 ${after.cards}장 (10장이어야 함)`);
+must(after.total === 10, `소환 횟수 기록 ${after.total}`);
+must(after.ink < before.ink, '먹물이 차감되지 않음');
+must(after.owned > before.owned || after.shards > 0, '보유도 조각도 늘지 않음');
+const summonSaved = after;
+
 // 새로고침 후에도 남아 있는가 (DoD 18)
 await page.reload({ waitUntil: 'networkidle2' });
 await page.waitForFunction('window.__gugu__?.ready');
-const after = await page.evaluate(() => JSON.parse(localStorage.getItem('gugu:save') ?? '{}'));
-must(Object.keys(after?.data?.progress?.cleared ?? {}).length > 0, '새로고침 후 진행도가 사라짐');
+const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('gugu:save') ?? '{}'));
+must(Object.keys(persisted?.data?.progress?.cleared ?? {}).length > 0, '새로고침 후 진행도가 사라짐');
+must(Object.keys(persisted?.data?.roster ?? {}).length === summonSaved.owned, '새로고침 후 소환한 셈지기가 사라짐');
+must((persisted?.data?.summon?.total ?? 0) === 10, '새로고침 후 소환 기록이 사라짐');
 
 await browser.close();
 
@@ -136,6 +172,7 @@ console.log([
   `- 클리어 기록: ${JSON.stringify(cleared)}`,
   `- 먹물: ${result.save?.data?.currency?.meokmul}`,
   `- SRS 항목: ${srsN} · 통계 유형: ${statN}`,
+  `- 소환: 10연 후 보유 ${summonSaved.owned}종 · 조각 ${summonSaved.shards} · 먹물 ${summonSaved.ink}`,
   `- 콘솔 에러: ${errors.length}`,
   ...errors.map((e) => `  - ${e}`),
   `- 실패: ${problems.length}`,

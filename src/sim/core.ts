@@ -1,5 +1,5 @@
 import type { BattleSnapshot, BattleStatus, LiveUnit, StageDef } from './types';
-import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID } from './units';
+import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult } from './units';
 import { allyGrowth, MAP_LEN, MAX_SEC } from './stages';
 import {
   baseRegen, comboMul, newDda, rewardFor, START_MONEY, stepDda,
@@ -37,8 +37,12 @@ export class Battle {
   /** 렌더/사운드가 소비하는 1회성 이벤트 큐 */
   events: { type: 'hit' | 'die' | 'summon' | 'castleHit'; x: number; side: 1 | -1 }[] = [];
 
-  constructor(stage: StageDef) {
+  /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
+  private levels: Readonly<Record<string, number>>;
+
+  constructor(stage: StageDef, levels: Readonly<Record<string, number>> = {}) {
     this.stage = stage;
+    this.levels = levels;
     this.growth = allyGrowth(stage.index);
     this.castleHp = stage.castleHp;
     this.playerCastleHp = stage.playerCastleHp;
@@ -66,14 +70,16 @@ export class Battle {
     const def = ALLY_BY_ID.get(defId)!;
     this.money -= def.cost;
     this.cooldowns.set(defId, this.t + def.cd);
+    // 진도 성장(모두에게 자동) × 승급 배율(그 셈지기를 얼마나 키웠나)
+    const m = this.growth * levelMult(this.levels[defId] ?? 1);
     this.units.push({
       uid: this.uidSeq++,
       side: 1,
       defId,
       x: 0,
-      hp: def.hp * this.growth,
-      maxHp: def.hp * this.growth,
-      atk: def.atk * this.growth,
+      hp: def.hp * m,
+      maxHp: def.hp * m,
+      atk: def.atk * m,
       aspd: def.aspd,
       range: def.range,
       spd: def.spd,
@@ -93,7 +99,7 @@ export class Battle {
     let gained = 0;
     if (correct) {
       this.correct++;
-      gained = rewardFor(this.combo, this.dda.level);
+      gained = rewardFor(this.combo, this.dda.level, this.stage.index);
       this.money += gained;
       if (countsForCombo) this.combo++;
     } else {
@@ -126,7 +132,8 @@ export class Battle {
       if (n < s.cap) {
         const e = ENEMY_BY_ID.get(s.id);
         if (e) {
-          const m = this.stage.mult;
+          // 수문장은 구역별 기본 체력 차이를 예산에 맞춰 보정한다(stages.ts 의 hpMul)
+          const m = this.stage.mult * (s.hpMul ?? 1);
           this.units.push({
             uid: this.uidSeq++,
             side: -1,
@@ -135,7 +142,7 @@ export class Battle {
             x: e.spd === 0 ? MAP_LEN - 80 : MAP_LEN,
             hp: e.hp * m,
             maxHp: e.hp * m,
-            atk: e.atk * m,
+            atk: e.atk * this.stage.mult,
             aspd: e.aspd,
             range: e.range,
             spd: e.spd,
