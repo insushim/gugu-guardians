@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gugu-board",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  // 순위표는 단일 Durable Object 하나가 전부다. D1 을 쓰지 않는 이유는 src/index.ts 머리말 참조.
+  "durable_objects": {
+    "bindings": [{ "name": "BOARD", "class_name": "BoardDO" }]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BoardDO"] }
+  ],
+  "observability": { "enabled": true }
+}

@@ -10,6 +10,7 @@ import type { Question } from '../edu/generator';
 import { el, btn, type Teardown } from './dom';
 import * as store from '../save/store';
 import { play } from '../render/audio';
+import { bumpWeeklyNow } from '../meta/weekly';
 
 /**
  * 전투 화면 — Canvas 전장 + DOM UI(숫자패드·덱·HUD).
@@ -214,7 +215,13 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       seconds: battle.t,
       answerMs: battle.answerMs,
     };
-    store.update((d) => { d.edu.playMs += playMs; d.edu.rounds += 1; });
+    store.update((d) => {
+      d.edu.playMs += playMs;
+      d.edu.rounds += 1;
+      // 주간 순위 버킷. 동의 여부와 무관하게 로컬에는 쌓는다 —
+      // 나중에 켰을 때 "이번 주 기록이 0"이 되면 아이 입장에선 손해다.
+      bumpWeeklyNow(d, { correct: battle.correct, playMs, stage: r.status === 'win' ? stageIndex : 0 });
+    });
     onDone(r);
   }
 

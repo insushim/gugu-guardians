@@ -10,14 +10,17 @@
     "preview": "vite preview --port 5184 --strictPort",
     "test": "vitest run",
     "probe": "node tools/balance-probe.mjs",
-    "check": "tsc --noEmit && vitest run && node tools/balance-probe.mjs",
-    "build:single": "npm run build && node tools/build-single.mjs"
+    "check": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json && vitest run && node tools/balance-probe.mjs",
+    "build:single": "node tools/build-single.mjs",
+    "deploy:server": "wrangler deploy --config server/wrangler.jsonc"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260728.1",
     "@types/node": "^26.1.2",
     "puppeteer": "^25.4.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "wrangler": "^4.115.0"
   }
 }

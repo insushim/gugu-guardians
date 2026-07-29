@@ -86,7 +86,10 @@ await sleep(900);
 const onGate = await page.evaluate(() => !!document.querySelector('.gate-q'));
 must(onGate, '봉인 해제(관문) 화면이 뜨지 않음');
 if (onGate) {
-  for (let i = 0; i < 6; i++) {
+  // 🔴 반복 예산을 문항 수(5)에 딱 맞추면 안 된다 — 클릭 한 번이 빗나가거나
+  //    문제 형식이 정규식에 안 걸리는 순간 관문을 다 못 풀고 나가서, 제품이 멀쩡한데도
+  //    "별이 없다·기록이 저장 안 됨"으로 무더기 실패가 난다(실제로 그랬다).
+  for (let i = 0; i < 14; i++) {
     const done = await page.evaluate(() => !document.querySelector('.gate-q'));
     if (done) break;
     const q = await page.evaluate(() => document.querySelector('.gate-q')?.textContent ?? '');
@@ -96,9 +99,20 @@ if (onGate) {
       const ask = await page.evaluate(() => document.querySelectorAll('.gate-wrap .muted')[1]?.textContent ?? '');
       let ans = m[2] === '+' ? a + b : m[2] === '−' ? a - b : m[2] === '×' ? a * b : Math.floor(a / b);
       if (m[2] === '÷' && ask.includes('나머지')) ans = a % b;
-      await clickText(String(ans));
+      // 정확히 그 숫자인 버튼을 누른다(부분일치는 "7"이 "17"을 집을 수 있다)
+      const exact = await page.evaluateHandle(
+        (t) => [...document.querySelectorAll('.choices button')].find((b) => b.textContent?.trim() === t) ?? null,
+        String(ans),
+      );
+      const eEl = exact.asElement();
+      if (eEl) {
+        const bb = await eEl.boundingBox();
+        if (bb) await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);
+      } else {
+        await clickText(String(ans));
+      }
     }
-    await sleep(1300);
+    await sleep(900);
   }
   await page.screenshot({ path: join(OUT, 'e2e-2-gate.png') });
 }

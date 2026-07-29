@@ -5,9 +5,10 @@ import { installUnlockHooks } from './render/audio';
 import { buildBattle, type BattleResult } from './ui/battle';
 import {
   menuScreen, mapScreen, prepScreen, gateScreen, resultScreen, summonScreen,
-  codexScreen, srsScreen, reportScreen, settingsScreen, type ResultPayload,
+  codexScreen, srsScreen, reportScreen, settingsScreen, boardScreen, type ResultPayload,
 } from './ui/screens';
 import * as store from './save/store';
+import { submitScore } from './net/board';
 import { weekKey, today } from './edu/date';
 
 /**
@@ -56,6 +57,8 @@ function go(screen: string, payload?: unknown): void {
       const p = payload as { stage: number; deck: string[] };
       mount(root, () => buildBattle(p.stage, p.deck, (r: BattleResult) => {
         snapshotWeekly();
+        // 순위 갱신은 동의했을 때만 나가고, 실패해도 조용히 넘어간다(게임을 막지 않는다)
+        void submitScore();
         // 이겼을 때만 봉인 해제(관문)로 간다. 졌으면 바로 결과 — 학습은 이미 전투 중에 했다.
         if (r.status === 'win') go('gate', r);
         else go('result', { ...r, starN: 0, gateCorrect: 0, gateTotal: 5 });
@@ -76,6 +79,9 @@ function go(screen: string, payload?: unknown): void {
       break;
     case 'report':
       mount(root, () => reportScreen(go));
+      break;
+    case 'board':
+      mount(root, () => boardScreen(go));
       break;
     case 'settings':
       mount(root, () => settingsScreen(go));

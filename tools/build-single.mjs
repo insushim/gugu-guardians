@@ -8,23 +8,31 @@
  * 방식: JS 안에 남아 있는 에셋 경로 문자열(`assets/x.webp`·`audio/sfx/x.ogg`)을
  *       data URI 로 치환한다. (assets.ts·audio.ts 가 data: 를 통과시키도록 되어 있다.)
  *
- * 실행: npm run build && node tools/build-single.mjs
- * 출력: dist-single/gugu-guardians.html   (통 HTML — 브라우저로 바로 열림)
- *       dist-single/artifact.html         (아티팩트용 조각 — doctype/html/head/body 없음)
+ * 🔴 전용 빌드를 **직접** 돌린다(`--mode single`, `.env.single`).
+ *    아티팩트는 CSP 로 외부 요청이 전부 막히므로 주간 순위 서버 주소를 비워야 하고,
+ *    dist/ 를 재사용하면 GitHub Pages 용(순위 켜짐) 번들이 섞여 들어간다.
+ *
+ * 실행: npm run build:single
+ * 출력: dist-single/gugu-guardians.html      (통 HTML — 브라우저로 바로 열림)
+ *       dist-single/gugu-guardians-play.html (아티팩트용 조각 — doctype/html/head/body 없음)
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, basename, extname } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const DIST = join(ROOT, 'dist');
+const DIST = join(ROOT, '.cache-single-dist');
 const OUT = join(ROOT, 'dist-single');
 const TMP = join(ROOT, '.cache-single');
 
 const die = (m) => { console.error(`✗ ${m}`); process.exit(1); };
 const kb = (n) => `${Math.round(n / 1024)}KB`;
 
-if (!existsSync(join(DIST, 'index.html'))) die('dist/ 가 없다. 먼저 `npm run build`.');
+// ── 0. 단일 파일 전용 번들 (순위 기능 꺼짐)
+execFileSync('npx', ['vite', 'build', '--mode', 'single', '--outDir', DIST, '--emptyOutDir'], {
+  cwd: ROOT, stdio: 'inherit',
+});
+if (!existsSync(join(DIST, 'index.html'))) die('전용 빌드가 index.html 을 만들지 못했다');
 mkdirSync(OUT, { recursive: true });
 mkdirSync(TMP, { recursive: true });
 
@@ -93,6 +101,13 @@ for (const t of targets) {
 }
 for (const t of targets) {
   if (js.includes(`"${t.path}"`)) die(`치환 누락: ${t.path}`);
+}
+
+// 🔴 아티팩트/파일 배포본에 외부 주소가 남으면 CSP 에 막혀 콘솔 에러가 난다.
+//    "순위가 꺼졌는지"를 눈으로 확인하지 말고 여기서 기계로 막는다.
+if (js.includes('workers.dev') || /https?:\/\/(?!schema\.org)/.test(js.replace(/data:[^"'`]+/g, ''))) {
+  const hit = js.replace(/data:[^"'`]+/g, '').match(/https?:\/\/[^"'`\s)]+/g) ?? [];
+  die(`단일 파일에 외부 주소가 남았다(순위 서버 주소가 꺼졌는지 확인): ${[...new Set(hit)].slice(0, 5).join(', ')}`);
 }
 
 // ── 4. 출력

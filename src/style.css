@@ -386,3 +386,18 @@ table.rep td.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* ── 주간 순위 ─────────────────────────────────────────────────────────── */
+.board-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.rank { display: grid; gap: 4px; margin-top: 8px; }
+.rank-row { display: grid; grid-template-columns: 2.2em 1fr auto; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 8px; background: #f6efe2; font-size: .84em; }
+.rank-row.top { background: linear-gradient(90deg, #fff4d0, #f6efe2); font-weight: 800; }
+.rank-n { font-weight: 900; text-align: center; font-variant-numeric: tabular-nums; color: var(--cheong); }
+.rank-row.top .rank-n { color: var(--gold); }
+.rank-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-v { font-variant-numeric: tabular-nums; font-weight: 800; }
+@media (max-height: 430px) {
+  .board-cols { gap: 8px; }
+  .rank-row { padding: 3px 6px; font-size: .7em; }
+}
