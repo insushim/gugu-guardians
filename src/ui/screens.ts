@@ -16,7 +16,7 @@ import { TYPE_BY_ID, type QType } from '../edu/curriculum';
 import { QuizSession } from '../edu/session';
 import { buildChoices } from '../edu/distractor';
 import { makeRng, type Question } from '../edu/generator';
-import { play } from '../render/audio';
+import { play, syncBgmSetting } from '../render/audio';
 import { accuracy, automaticity, questionDensity, retention, thetaDelta, thetaDisplayable, weakTypes } from '../edu/stats';
 import {
   boardEnabled, fetchBoard, submitScore, grantConsent, revokeConsent, entryName, type BoardEntry,
@@ -699,10 +699,18 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
     go('settings');
   }, 'btn sm');
 
-  const sound = btn(d.settings.sound ? '소리: 켜짐' : '소리: 꺼짐', () => {
+  const sound = btn(d.settings.sound ? '효과음: 켜짐' : '효과음: 꺼짐', () => {
     store.update((s) => { s.settings.sound = !s.settings.sound; });
     go('settings');
-  }, 'btn sm');
+  }, `btn sm ${d.settings.sound ? '' : 'ghost'}`);
+
+  // 🔴 음악을 효과음과 따로 끄게 둔다. 교실에서 여럿이 동시에 하면 음악이 먼저 문제가 되는데,
+  //    소리를 통째로 끄게 만들면 정답·오답 피드백까지 사라져 학습 신호가 죽는다.
+  const music = btn(d.settings.music ? '음악: 켜짐' : '음악: 꺼짐', () => {
+    store.update((s) => { s.settings.music = !s.settings.music; });
+    syncBgmSetting();
+    go('settings');
+  }, `btn sm ${d.settings.music ? '' : 'ghost'}`);
 
   const boardToggle = btn(d.board.consent ? '순위 올리기: 켜짐' : '순위 올리기: 꺼짐', () => {
     if (d.board.consent) revokeConsent(); else grantConsent();
@@ -717,7 +725,11 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
     topbar('설정', go),
     el('div', { class: 'pane' },
       el('div', { class: 'card' }, el('b', {}, '글자 크기'), fontRow),
-      el('div', { class: 'card' }, el('b', {}, '움직임과 소리'), el('div', { class: 'row' }, motion, sound)),
+      el('div', { class: 'card' },
+        el('b', {}, '움직임과 소리'),
+        el('div', { class: 'row' }, motion, sound, music),
+        el('div', { class: 'muted' }, '음악만 따로 끌 수 있어요. 여럿이 함께 할 때 편해요.'),
+      ),
       el('div', { class: 'card' },
         el('b', {}, '내 별명'), el('div', {}, d.profile.nickname),
         el('div', { class: 'muted' }, '이름 대신 쓰는 별명이에요. 우리가 자동으로 지어 줘요.'),

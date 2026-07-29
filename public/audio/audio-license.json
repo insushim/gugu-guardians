@@ -1,20 +1,94 @@
 {
   "entries": [
     {
-      "file": "kenney_ui-audio/",
+      "file": "sfx/tap.ogg",
       "source": "Kenney",
       "license": "CC0",
-      "author": "Kenney",
+      "author": "Kenney Vleugels (kenney.nl)",
       "url": "https://kenney.nl/assets/ui-audio",
-      "fetched": "2026-07-28"
+      "fetched": "2026-07-28",
+      "note": "UI SFX Set 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
     },
     {
-      "file": "kenney_impact-sounds/",
+      "file": "sfx/correct.ogg",
       "source": "Kenney",
       "license": "CC0",
-      "author": "Kenney",
+      "author": "Kenney Vleugels (kenney.nl)",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28",
+      "note": "UI SFX Set 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
+    },
+    {
+      "file": "sfx/wrong.ogg",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney Vleugels (kenney.nl)",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28",
+      "note": "UI SFX Set 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
+    },
+    {
+      "file": "sfx/win.ogg",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney Vleugels (kenney.nl)",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28",
+      "note": "UI SFX Set 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
+    },
+    {
+      "file": "sfx/summon.ogg",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney Vleugels (kenney.nl)",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28",
+      "note": "UI SFX Set 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
+    },
+    {
+      "file": "sfx/hit.ogg",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney Vleugels (kenney.nl)",
       "url": "https://kenney.nl/assets/impact-sounds",
-      "fetched": "2026-07-28"
+      "fetched": "2026-07-28",
+      "note": "Impact Sounds 팩에서 용도별 1개 선별 후 이름 변경 · CC0라 크레딧 의무 없음"
+    },
+    {
+      "file": "sfx/LICENSE-kenney.txt",
+      "source": "Kenney",
+      "license": "CC0",
+      "author": "Kenney Vleugels (kenney.nl)",
+      "url": "https://kenney.nl/assets/ui-audio",
+      "fetched": "2026-07-28",
+      "note": "원본 팩 동봉 라이선스 원문"
+    },
+    {
+      "file": "bgm/field.ogg",
+      "source": "OpenGameArt",
+      "license": "CC0",
+      "author": "Rick Hoppmann (Tinyworlds) — \"Blue Meadow in Green Sky\"",
+      "url": "https://opengameart.org/content/blue-meadow-in-green-sky",
+      "fetched": "2026-07-29",
+      "note": "64kbps OGG 재인코딩 + loudnorm -20 LUFS. 루프 재생용이라 자르거나 페이드하지 않음"
+    },
+    {
+      "file": "bgm/battle.ogg",
+      "source": "OpenGameArt",
+      "license": "CC0",
+      "author": "Tozan — \"A path which leads to somewhere\"",
+      "url": "https://opengameart.org/content/a-path-which-leads-to-somewhere",
+      "fetched": "2026-07-29",
+      "note": "64kbps OGG 재인코딩 + loudnorm -20 LUFS"
+    },
+    {
+      "file": "bgm/boss.ogg",
+      "source": "OpenGameArt",
+      "license": "CC0",
+      "author": "Yubatake (qubodup 업로드) — \"Dark Shrine Loop\"",
+      "url": "https://opengameart.org/content/dark-shrine-loop",
+      "fetched": "2026-07-29",
+      "note": "64kbps OGG 재인코딩 + loudnorm -20 LUFS"
     }
   ]
 }

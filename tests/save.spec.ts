@@ -126,7 +126,8 @@ describe('세이브 정규화', () => {
       expect(d.edu.srs['M2:8x7']!.state).toBe('익힘');
       expect(d.edu.retentionLog).toHaveLength(1);
       expect(d.edu.thetaWeekly).toHaveLength(1);
-      expect(d.settings).toEqual({ sound: false, fontScale: 1.2, reduceMotion: true });
+      // v2.2에서 음악 토글이 추가됐다 — 옛 세이브에는 없으므로 기본 켜짐으로 채워진다
+      expect(d.settings).toEqual({ sound: false, music: true, fontScale: 1.2, reduceMotion: true });
     });
 
     it('codex.unlocked 를 보유 셈지기(roster)로 승격한다', () => {

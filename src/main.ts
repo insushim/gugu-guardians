@@ -1,7 +1,7 @@
 import './style.css';
 import { mount } from './ui/dom';
 import { loadAll } from './render/assets';
-import { installUnlockHooks } from './render/audio';
+import { installUnlockHooks, playBgm } from './render/audio';
 import { buildBattle, type BattleResult } from './ui/battle';
 import {
   menuScreen, mapScreen, prepScreen, gateScreen, resultScreen, summonScreen,
@@ -10,6 +10,7 @@ import {
 import * as store from './save/store';
 import { submitScore } from './net/board';
 import { weekKey, today } from './edu/date';
+import { stageDef } from './sim/stages';
 
 /**
  * 구구성 수호대 — 부트스트랩 & 화면 라우터.
@@ -39,7 +40,21 @@ function snapshotWeekly(): void {
   });
 }
 
+/**
+ * 화면 → 음악. 전투만 곡이 바뀌고 나머지는 같은 곡을 이어 튼다
+ * (화면을 옮길 때마다 음악이 끊기면 산만하다 — `playBgm` 이 같은 곡이면 아무 일도 안 한다).
+ */
+function bgmFor(screen: string, payload?: unknown): void {
+  if (screen === 'battle') {
+    const stage = (payload as { stage?: number } | undefined)?.stage ?? 1;
+    playBgm(stageDef(stage).boss || stageDef(stage).endless ? 'boss' : 'battle');
+    return;
+  }
+  playBgm('field');
+}
+
 function go(screen: string, payload?: unknown): void {
+  bgmFor(screen, payload);
   switch (screen) {
     case 'menu':
       mount(root, () => menuScreen(go));

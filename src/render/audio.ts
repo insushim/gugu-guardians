@@ -43,6 +43,9 @@ export function unlock(): void {
     ctx = new Ctor();
     void ctx.resume();
     void preload();
+    // 🔴 음악은 언락 전에 요청됐을 수 있다(메뉴 진입 시점 = 아직 사용자 제스처 없음).
+    //    언락되는 순간 원하던 곡을 다시 건다.
+    if (wantTrack) playBgm(wantTrack);
   } catch {
     ctx = null;
   }
@@ -99,4 +102,114 @@ export function installUnlockHooks(): void {
   window.addEventListener('pointerdown', once, { once: false });
   window.addEventListener('keydown', once, { once: false });
   window.addEventListener('touchstart', once, { once: false });
+}
+
+// ── 배경음악 ──────────────────────────────────────────────────────────────
+/**
+ * BGM — CC0(OpenGameArt) 루프 트랙.
+ *
+ * 🔴 **효과음과 따로 끈다.** 교실에서 30명이 동시에 하면 음악이 먼저 문제가 된다.
+ *    소리를 통째로 끄게 만들면 정답/오답 피드백까지 사라져 학습 신호가 죽는다.
+ * 🔴 **지연 로드**한다. 곡 하나가 300KB대라 첫 화면 로딩에 물리면 시작이 느려진다.
+ *    필요한 씬에 들어갈 때 받아 오고, 받는 동안 게임은 그대로 돌아간다.
+ * 🔴 파일에 페이드를 굽지 않았다(루프마다 소리가 꺼졌다 켜진다). 전환 페이드는 여기서 한다.
+ */
+export type Bgm = 'field' | 'battle' | 'boss';
+
+const BGM_FILES: Record<Bgm, string> = {
+  field: 'audio/bgm/field.ogg',
+  battle: 'audio/bgm/battle.ogg',
+  boss: 'audio/bgm/boss.ogg',
+};
+
+/** 효과음(정답·오답)이 묻히지 않도록 음악은 확실히 낮게 깐다 */
+const BGM_VOLUME = 0.22;
+const FADE_SEC = 0.9;
+
+const bgmBuffers = new Map<Bgm, AudioBuffer>();
+const bgmLoading = new Map<Bgm, Promise<AudioBuffer | null>>();
+let bgmNode: { src: AudioBufferSourceNode; gain: GainNode; track: Bgm } | null = null;
+let wantTrack: Bgm | null = null;
+
+function loadBgm(track: Bgm): Promise<AudioBuffer | null> {
+  const cached = bgmBuffers.get(track);
+  if (cached) return Promise.resolve(cached);
+  const inflight = bgmLoading.get(track);
+  if (inflight) return inflight;
+
+  const job = (async (): Promise<AudioBuffer | null> => {
+    if (!ctx) return null;
+    try {
+      const p = BGM_FILES[track];
+      const res = await fetch(p.startsWith('data:') ? p : `${base()}${p}`);
+      if (!res.ok) return null;
+      const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+      bgmBuffers.set(track, buf);
+      return buf;
+    } catch {
+      return null;   // 음악이 없어도 게임은 완전히 플레이 가능해야 한다
+    } finally {
+      bgmLoading.delete(track);
+    }
+  })();
+  bgmLoading.set(track, job);
+  return job;
+}
+
+function fadeOutAndStop(node: { src: AudioBufferSourceNode; gain: GainNode }): void {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  try {
+    node.gain.gain.cancelScheduledValues(t);
+    node.gain.gain.setValueAtTime(node.gain.gain.value, t);
+    node.gain.gain.linearRampToValueAtTime(0, t + FADE_SEC);
+    node.src.stop(t + FADE_SEC + 0.05);
+  } catch {
+    try { node.src.stop(); } catch { /* 이미 멈춤 */ }
+  }
+}
+
+/**
+ * 씬에 맞는 음악으로 바꾼다. 같은 곡이면 아무 일도 하지 않는다(화면 전환마다 끊기면 안 된다).
+ * `null`이면 음악을 끈다.
+ */
+export function playBgm(track: Bgm | null): void {
+  wantTrack = track;
+  if (!ctx) return;
+  if (!store.load().settings.music || track === null) {
+    if (bgmNode) { fadeOutAndStop(bgmNode); bgmNode = null; }
+    return;
+  }
+  if (bgmNode?.track === track) return;
+
+  void loadBgm(track).then((buf) => {
+    // 로드가 끝났을 때 이미 다른 씬으로 갔거나 음악을 껐으면 재생하지 않는다
+    if (!ctx || !buf || wantTrack !== track || !store.load().settings.music) return;
+    if (bgmNode?.track === track) return;
+    if (bgmNode) { fadeOutAndStop(bgmNode); bgmNode = null; }
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const gain = ctx.createGain();
+      const t = ctx.currentTime;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(BGM_VOLUME, t + FADE_SEC);
+      src.connect(gain).connect(ctx.destination);
+      src.start();
+      bgmNode = { src, gain, track };
+    } catch {
+      /* 재생 실패는 무시 */
+    }
+  });
+}
+
+/** 설정에서 음악을 껐다 켤 때 — 현재 씬의 곡을 다시 반영한다 */
+export function syncBgmSetting(): void {
+  const want = wantTrack;
+  if (!store.load().settings.music) {
+    if (bgmNode) { fadeOutAndStop(bgmNode); bgmNode = null; }
+    return;
+  }
+  if (want && !bgmNode) playBgm(want);
 }

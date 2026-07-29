@@ -1,0 +1,16 @@
+{
+  "name": "구구성 수호대",
+  "short_name": "구구성",
+  "description": "계산이 빨라질수록 내 군대가 강해지는 초등 연산 라인 디펜스",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#FAF6EE",
+  "theme_color": "#1B4F8C",
+  "lang": "ko",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -40,7 +40,7 @@ export interface SaveData {
     retentionLog: { key: string; matured: string; recheck: string; ok: boolean }[];
     rounds: number;
   };
-  settings: { sound: boolean; fontScale: 1 | 1.2 | 1.5; reduceMotion: boolean };
+  settings: { sound: boolean; music: boolean; fontScale: 1 | 1.2 | 1.5; reduceMotion: boolean };
   /**
    * 익명 주간 순위. 기본값은 **보내지 않음**이다(consent: false).
    * device 는 순위에 올리겠다고 누른 순간에만 만들어진다 — 안 쓰는 아이는 토큰조차 없다.
@@ -90,7 +90,7 @@ export function defaultSave(): SaveData {
     codex: { unlocked: [...STARTER_UNITS] },
     currency: { meokmul: 0, recovered: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
-    settings: { sound: true, fontScale: 1, reduceMotion: false },
+    settings: { sound: true, music: true, fontScale: 1, reduceMotion: false },
     board: { device: '', consent: false, week: '', correct: 0, stage: 0, playMs: 0 },
   };
 }
@@ -252,6 +252,8 @@ export function normalize(input: unknown): SaveData {
     },
     settings: {
       sound: bool(settings['sound'], true),
+      // 옛 세이브에는 music 이 없다 — 기본 켜짐으로 채운다(효과음과 따로 끌 수 있게 v2.2에서 분리)
+      music: bool(settings['music'], true),
       fontScale,
       reduceMotion: bool(settings['reduceMotion'], false),
     },

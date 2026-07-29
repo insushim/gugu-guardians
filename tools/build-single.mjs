@@ -85,6 +85,13 @@ for (const n of ['correct', 'wrong', 'tap', 'summon', 'hit', 'win']) {
   if (!existsSync(abs)) die(`소리 없음: ${p}`);
   targets.push({ path: p, abs });
 }
+// BGM — 단일 파일은 외부 요청이 0건이어야 하므로 지연 로드분도 통째로 넣는다
+for (const n of ['field', 'battle', 'boss']) {
+  const p = `audio/bgm/${n}.ogg`;
+  const abs = join(ROOT, 'public', p);
+  if (!existsSync(abs)) die(`배경음악 없음: ${p}`);
+  targets.push({ path: p, abs });
+}
 
 // ── 3. 번들 읽고 치환
 const indexHtml = readFileSync(join(DIST, 'index.html'), 'utf8');
@@ -130,12 +137,17 @@ ${BODY}
 ${js}
 </script>`;
 
+// 파비콘도 data URI 로 — 파일 하나만 올릴 수 있는 곳에서도 탭 아이콘이 살아야 한다
+const iconSvg = readFileSync(join(ROOT, 'public/icon.svg'), 'utf8');
+const iconUri = `data:image/svg+xml;base64,${Buffer.from(iconSvg).toString('base64')}`;
+
 const standalone = `<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
 <meta name="theme-color" content="#1B4F8C" />
+<link rel="icon" href="${iconUri}" type="image/svg+xml" />
 ${fragment.split('\n').slice(0, 2).join('\n')}
 <style>
 ${css}
