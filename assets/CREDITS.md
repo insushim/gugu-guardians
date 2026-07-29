@@ -16,6 +16,7 @@
 | castle_foe | castle | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
 | cheongryong | unit | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
 | chorong | unit | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
+| crest_haetae | ui | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
 | dokkabi | unit | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
 | dokkabidae | unit | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |
 | e_arch | enemy | ai | Meta AI 생성 · 프로젝트 내 사용. 핵심 IP는 상용화 전 인간 디자이너 최종화 필요 |

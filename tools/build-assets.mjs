@@ -18,10 +18,16 @@ const TMP = join(ROOT, '_raw/.tmp');
 const SPRITE_H = 256;   // 스프라이트 기준 높이(px)
 const BG_W = 1280;      // 배경 기준 폭(px)
 
+const CREST_H = 320;    // 메뉴 인장은 스프라이트보다 크게 보이므로 해상도를 더 준다
+
 const GROUPS = [
   { dir: 'units',   kind: 'unit',  h: SPRITE_H, alpha: true },
   { dir: 'enemies', kind: 'enemy', h: SPRITE_H, alpha: true },
   { dir: 'bg',      kind: 'bg',    w: BG_W,     alpha: false },
+  // 🔴 crest 를 그룹에 넣지 않으면, 이 스크립트가 매니페스트를 통째로 다시 쓸 때
+  //    crest_haetae 항목이 조용히 사라진다 → assetUrl()이 빈 문자열 → 메뉴 인장이
+  //    에러 한 줄 없이 빈 원으로 뜬다(실제로 한 번 당했다). 원본을 두는 곳이 곧 진실원이다.
+  { dir: 'crest',   kind: 'ui',    h: CREST_H,  alpha: true },
 ];
 const CASTLE_KEYS = new Set(['castle_ally', 'castle_foe']);
 
