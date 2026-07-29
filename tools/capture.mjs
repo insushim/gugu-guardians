@@ -170,15 +170,22 @@ for (const vp of VIEWPORTS) {
     await sleep(320);
   }
   await sleep(600);
+  // 🔴 화면 글자가 아니라 __gugu__ 에서 읽는다. 표기를 바꾸면("123" → "123 / 960")
+  //    Number() 가 NaN 이 되어 검사가 조용히 무너진다(실측).
   const mid = await page.evaluate(() => ({
     units: (window.__gugu__?.units ?? -1),
-    money: document.querySelector('.bhud .mana')?.textContent ?? '',
+    money: (window.__gugu__?.money ?? -1),
+    manaMax: (window.__gugu__?.manaMax ?? -1),
+    maxHaste: (window.__gugu__?.maxHasteSeen ?? -1),
     combo: document.querySelector('.bhud .combo')?.textContent ?? '',
     screen: window.__gugu__?.screen ?? '',
   }));
   await shot(page, `${vp.name}-6-fighting`);
   must(Number(mid.money) > 0, `[${vp.name}] 자동 플레이 후 셈력이 0`);
   must(mid.units > 0, `[${vp.name}] 자동 플레이 후 전장에 유닛이 하나도 없다`);
+  must(Number(mid.money) <= Number(mid.manaMax), `[${vp.name}] 셈력이 그릇을 넘었다 ${mid.money}/${mid.manaMax}`);
+  // 문제를 40번 풀었으면 신바람이 한 번은 붙었어야 한다
+  must(Number(mid.maxHaste) > 1, `[${vp.name}] 정답을 맞혔는데 신바람이 한 번도 안 붙었다 (${mid.maxHaste})`);
 
   await page.close();
 }

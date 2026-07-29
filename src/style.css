@@ -204,21 +204,37 @@ body {
 }
 .gauge { flex: 0 0 190px; height: 26px; border: 2px solid var(--hanji); border-radius: 13px; overflow: hidden; background: #0b0908; }
 .gauge > i { display: block; height: 100%; background: var(--hwang); width: 0%; transition: width .12s linear; }
-.bhud .mana { font-weight: 900; font-variant-numeric: tabular-nums; min-width: 3.2em; }
+.bhud .mana { font-weight: 900; font-variant-numeric: tabular-nums; min-width: 6.4em; }
+/* 그릇이 꽉 차면 넘치는 셈력이 버려진다 — 색으로 알린다(그릇 강화 동기) */
+.bhud .mana.full { color: var(--ju); }
+.gauge > i.full { background: var(--ju); }
 .bhud .combo { font-weight: 900; color: var(--hwang); min-width: 5.5em; }
+.bhud .spd { font-weight: 900; color: var(--nok); min-width: 4.2em; }
 .bhud .spacer { flex: 1; }
 
 .field-wrap { flex: 1 1 auto; position: relative; min-height: 100px; display: flex; }
-.deck-col {
-  flex: 0 0 118px; display: flex; flex-direction: column; gap: 6px; padding: 6px;
-  background: #1a1512; border-right: 3px solid #000; overflow: hidden;
+
+/* 덱은 하단 조작줄에 가로로 눕는다.
+   🔴 셈지기가 늘어나도 카드 크기는 그대로 두고 **가로로만** 넘긴다. flex-wrap 으로 줄이면
+      카드가 작아져 저학년 터치 타겟(44px)이 무너진다. */
+.deck-row {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 72px; gap: 6px;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  overscroll-behavior-x: contain; padding-bottom: 2px;
+  /* 넘칠 때만 오른쪽 끝이 흐려진다 — "더 있다"를 글자 없이 알린다.
+     background-attachment:local 이라 끝까지 스크롤하면 저절로 사라진다. */
+  background:
+    linear-gradient(to right, #1a1512 30%, rgba(26, 21, 18, 0)) left / 22px 100% no-repeat local,
+    linear-gradient(to left, #1a1512 30%, rgba(26, 21, 18, 0)) right / 22px 100% no-repeat local,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, .5), rgba(0, 0, 0, 0)) right / 12px 100% no-repeat scroll;
 }
 .dcard {
-  flex: 1 1 0; min-height: 0; position: relative; border: 3px solid #000; border-radius: 10px;
+  position: relative; border: 3px solid #000; border-radius: 10px;
   background: var(--hanji); font: inherit; cursor: pointer; padding: 2px; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 0;
 }
-.dcard img { width: 46px; height: 46px; object-fit: contain; pointer-events: none; }
+.dcard img { width: clamp(28px, 5vh, 46px); height: clamp(28px, 5vh, 46px); object-fit: contain; pointer-events: none; }
 .dcard .cost { font-size: .62em; font-weight: 900; font-variant-numeric: tabular-nums; }
 .dcard .nm { font-size: .58em; font-weight: 700; }
 .dcard { border-color: var(--rc, #000); }
@@ -239,15 +255,45 @@ canvas#field { flex: 1 1 auto; display: block; width: 100%; height: 100%; image-
 
 .control {
   /* 🔴 하단 조작부가 높이를 무제한으로 먹으면 전장이 0px로 눌린다(실측: 900×310에서 전장 소실) */
-  flex: 0 0 auto; max-height: 48dvh; display: flex; gap: 10px; padding: 8px 10px;
-  background: #1a1512; border-top: 3px solid #000; align-items: stretch;
+  flex: 0 0 auto; max-height: 48dvh; padding: 8px 10px;
+  background: #1a1512; border-top: 3px solid #000;
+  /* [덱 | 문제 | 숫자패드] — 셋 다 하단에 둔다.
+     🔴 문제 칸을 1fr 로 두면 남는 폭을 전부 먹어 흰 판이 화면을 뒤덮는다(실측). 폭을 묶는다. */
+  /* 🔴 덱에 1fr 을 주면 카드가 3장일 때 남는 폭을 전부 먹어 카드와 문제 칸 사이가 뻥 뚫린다.
+     minmax(0, auto) = 내용만큼만 쓰되 좁아지면 스크롤로 줄어든다. 남는 폭은 열 사이로 분배. */
+  display: grid; gap: 10px; align-items: stretch; justify-content: space-between;
+  grid-template-columns: minmax(0, auto) auto minmax(200px, 26vw) auto;
 }
+
+/* 먹 대포 — 다 차면 스스로 빛난다(글로 설명하지 않는다) */
+.side-col { display: grid; align-items: stretch; }
+.cannon {
+  position: relative; width: 74px; border: 3px solid #000; border-radius: 10px;
+  background: #2c2320; color: var(--hanji); font: inherit; font-weight: 800; font-size: .62em;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  overflow: hidden; cursor: pointer; padding: 2px; min-height: 0;
+}
+.cannon .ic { font-size: 1.7em; line-height: 1; filter: grayscale(1) opacity(.5); }
+.cannon .lb { position: relative; z-index: 2; }
+/* 충전량은 아래에서 차오른다 */
+.cannon > i {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 0%;
+  background: rgba(212, 52, 47, .38); transition: height .18s linear; z-index: 1;
+}
+.cannon:disabled { cursor: default; }
+.cannon.ready { background: var(--ju); color: #fff; border-color: var(--hwang); animation: cannon-pulse 1.1s infinite; }
+.cannon.ready .ic { filter: none; }
+.cannon.ready > i { background: rgba(255, 255, 255, .22); }
+@keyframes cannon-pulse {
+  50% { box-shadow: 0 0 0 5px rgba(212, 52, 47, .34); }
+}
+@media (prefers-reduced-motion: reduce) { .cannon.ready { animation: none; } }
 .quiz {
-  flex: 1 1 auto; background: var(--hanji); border: 3px solid #000; border-radius: var(--radius);
-  padding: 8px 14px; display: flex; flex-direction: column; justify-content: center; min-width: 0;
+  background: var(--hanji); border: 3px solid #000; border-radius: var(--radius);
+  padding: 6px 10px; display: flex; flex-direction: column; justify-content: center; min-width: 0;
 }
 .quiz { text-align: center; }
-.quiz .q { font-size: clamp(24px, 4.6vh, 46px); font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.quiz .q { font-size: clamp(22px, 4.2vh, 40px); font-weight: 900; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .quiz .q .slot {
   display: inline-block; min-width: 1.1em; border-bottom: 5px solid var(--cheong);
   text-align: center; color: var(--cheong);
@@ -310,10 +356,13 @@ canvas#field { flex: 1 1 auto; display: block; width: 100%; height: 100%; image-
 
   .bhud { padding: 2px 8px; font-size: .7em; }
   .gauge { flex-basis: 130px; height: 18px; }
-  .deck-col { flex-basis: 84px; padding: 4px; gap: 4px; }
-  .dcard img { width: 28px; height: 28px; }
+  .deck-row { grid-auto-columns: 54px; gap: 4px; }
+  .dcard img { width: 26px; height: 26px; }
   .dcard .nm { font-size: .5em; }
-  .control { padding: 5px 6px; gap: 6px; }
+  /* 🔴 좁은 화면에선 문제 칸이 30vw 를 먹어 덱이 밀려 카드가 잘렸다(900×310 실측). 문제 칸을 먼저 줄인다. */
+  .control { padding: 5px 6px; gap: 6px; grid-template-columns: minmax(0, auto) auto minmax(136px, 23vw) auto; }
+  .cannon { width: 52px; font-size: .55em; }
+  .cannon .ic { font-size: 1.3em; }
   .btn.sm { min-height: 40px; padding: 0 10px; font-size: .7em; }
   .topbar { padding: 5px 10px; }
   .quiz { padding: 4px 8px; }

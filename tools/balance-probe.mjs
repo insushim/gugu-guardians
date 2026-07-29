@@ -15,7 +15,13 @@ import {
   simulate, stageDef, ALLIES, CAMPAIGN_STAGES, progressionAllies, ROSTER,
 } from './probe-model.mjs';
 
-const SEEDS = [1, 2, 3, 4, 5, 6, 7];
+/**
+ * 🔴 시드 7개면 승률이 1/7 = 14%p 단위로만 튄다 — 71%와 86%가 **표본 하나 차이**다.
+ *    그 해상도로 상수를 맞추면 노이즈에 맞추는 셈이고, 실제로 배속 상한을 고르다
+ *    1.7만 통과하고 1.6/1.8은 서로 다른 이유로 실패하는 칼날 구간이 나왔다.
+ *    21개면 4.8%p 해상도라 게이트 판정이 상수 변화에 대해 단조로워진다.
+ */
+const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : Infinity; };
 
 function runCell(st, acc, roster = null) {

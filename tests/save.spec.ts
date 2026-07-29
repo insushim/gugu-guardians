@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { normalize, migrate, defaultSave, randomNickname, SAVE_VERSION } from '../src/save/schema';
+import { MANA_CAP_MAX_LV } from '../src/sim/economy';
 
 /**
  * DoD 18·19 — 저장/복구.
@@ -128,6 +129,25 @@ describe('세이브 정규화', () => {
       expect(d.edu.thetaWeekly).toHaveLength(1);
       // v2.2에서 음악 토글이 추가됐다 — 옛 세이브에는 없으므로 기본 켜짐으로 채워진다
       expect(d.settings).toEqual({ sound: false, music: true, fontScale: 1.2, reduceMotion: true });
+    });
+
+    /**
+     * 🔴 v3 는 `upgrades.mana`(셈력 그릇 단계)를 더한다. 옛 세이브에는 그 칸이 없다 —
+     *    없는 칸을 0 이 아니라 undefined 로 흘리면 `manaCap(undefined)` 가 NaN 이 되고
+     *    전투 시작 즉시 셈력이 NaN 이 되어 아무것도 소환할 수 없다. 기본값을 못으로 박는다.
+     */
+    it('v2 → v3: 그릇 단계가 없으면 0으로 채우고 모은 먹물은 그대로 둔다', () => {
+      const d = migrate(v1);
+      expect(d.upgrades.mana).toBe(0);
+      expect(d.currency.meokmul).toBe(240);
+      expect(Number.isFinite(d.upgrades.mana)).toBe(true);
+    });
+
+    it('그릇 단계는 최대 단계를 넘지 못한다 — 손상 세이브 방어', () => {
+      expect(migrate({ data: { upgrades: { mana: 999 } } }).upgrades.mana).toBe(MANA_CAP_MAX_LV);
+      expect(migrate({ data: { upgrades: { mana: -5 } } }).upgrades.mana).toBe(0);
+      expect(migrate({ data: { upgrades: { mana: '셋' } } }).upgrades.mana).toBe(0);
+      expect(migrate({ data: { upgrades: 'nope' } }).upgrades.mana).toBe(0);
     });
 
     it('codex.unlocked 를 보유 셈지기(roster)로 승격한다', () => {

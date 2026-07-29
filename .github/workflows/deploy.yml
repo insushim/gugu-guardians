@@ -24,6 +24,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # 🔴 밸런스 게이트를 CI에 둔다.
+      #    "정답률 60% 아이가 캠페인을 소환 없이 통과한다"(G2)를 실측 검증하는 유일한 장치인데,
+      #    예전엔 npm run check(로컬 전용)에만 물려 있었다. 그래서 셈력 상한·배속·대포처럼
+      #    바로 이 게이트가 감시해야 할 상수를 바꾸고도 CI를 통과해 배포될 수 있었다.
+      #    parity 테스트는 "TS와 프로브 수식이 서로 같다"만 보장한다 — 다른 질문이다.
+      - run: node tools/balance-probe.mjs
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

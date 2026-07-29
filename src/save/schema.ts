@@ -6,12 +6,13 @@ import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
 import { today } from '../edu/date';
+import { MANA_CAP_MAX_LV } from '../sim/economy';
 // 🔴 순위 서버와 **같은 파일**을 본다. 양쪽에 복붙하면 한쪽만 고쳤을 때
 //    특정 별명을 뽑은 아이의 제출만 조용히 거절된다(테스트가 길이 일치를 강제한다).
 import { UUID_RE, MAX as BOARD_MAX } from '../../shared/board-contract';
 
 export const SAVE_KEY = 'gugu:save';
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 /** 스테이지가 무한이라 상한이 없다 — 다만 손상 세이브가 무한 루프를 만들지 않도록 선은 둔다 */
 export const MAX_STAGE_KEY = 9999;
@@ -30,6 +31,8 @@ export interface SaveData {
   summon: { sinceLegend: number; total: number };
   codex: { unlocked: string[] };
   currency: { meokmul: number; recovered: number };
+  /** 먹물로 산 영구 강화. 전투 밖에서만 바뀌고 전투는 읽기만 한다 */
+  upgrades: { mana: number };
   edu: {
     theta: Partial<Record<QType, number>>;
     thetaWeekly: WeeklySnapshot[];
@@ -89,6 +92,7 @@ export function defaultSave(): SaveData {
     summon: { sinceLegend: 0, total: 0 },
     codex: { unlocked: [...STARTER_UNITS] },
     currency: { meokmul: 0, recovered: 0 },
+    upgrades: { mana: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
     settings: { sound: true, music: true, fontScale: 1, reduceMotion: false },
     board: { device: '', consent: false, week: '', correct: 0, stage: 0, playMs: 0 },
@@ -147,6 +151,7 @@ export function normalize(input: unknown): SaveData {
   const progress = isObj(d['progress']) ? d['progress'] : {};
   const codex = isObj(d['codex']) ? d['codex'] : {};
   const currency = isObj(d['currency']) ? d['currency'] : {};
+  const upgrades = isObj(d['upgrades']) ? d['upgrades'] : {};
   const edu = isObj(d['edu']) ? d['edu'] : {};
   const settings = isObj(d['settings']) ? d['settings'] : {};
   const board = isObj(d['board']) ? d['board'] : {};
@@ -227,6 +232,9 @@ export function normalize(input: unknown): SaveData {
       meokmul: Math.floor(num(currency['meokmul'], 0, 0, 999999)),
       recovered: Math.floor(num(currency['recovered'], 0, 0, 999999)),
     },
+    upgrades: {
+      mana: Math.floor(num(upgrades['mana'], 0, 0, MANA_CAP_MAX_LV)),
+    },
     edu: {
       theta,
       thetaWeekly: arr(edu['thetaWeekly'], (x) => {
@@ -273,13 +281,15 @@ export function normalize(input: unknown): SaveData {
 /**
  * 마이그레이션 체인.
  *
- * v0(버전 필드 없음) → v1 → v2 전부 `normalize()` 하나로 흡수된다:
+ * v0(버전 필드 없음) → v1 → v2 → v3 전부 `normalize()` 하나로 흡수된다:
  *  - v1 의 `codex.unlocked` 는 보유 목록이었으므로 `roster` 로 승격된다
  *  - v1 의 `progress.challengeCleared` 는 사라졌다(11번 도전 → 매 구역 수문장으로 대체).
  *    버리는 필드라 별도 처리가 필요 없다 — 화이트리스트가 알아서 떨군다.
+ *  - v3 는 `upgrades.mana`(셈력 그릇 단계)를 더한다. **없으면 0** — 기존 저장은
+ *    기본 그릇으로 시작하고, 이미 모은 먹물은 그대로라 바로 강화할 수 있다.
  *  - 클리어 기록·먹물·SRS·통계·θ 시계열은 그대로 보존된다.
  *
- * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v2"를 만든다.
+ * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v3"를 만든다.
  *    단계를 나누면 v1 판정 로직이 하나 더 생기고, 그 판정이 틀리면 기록이 날아간다.
  */
 export function migrate(raw: unknown): SaveData {

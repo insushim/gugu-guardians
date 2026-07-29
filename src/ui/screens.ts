@@ -11,6 +11,7 @@ import {
   SUMMON_COST, SUMMON_COST_TEN, PITY_LEGEND, probabilityTable,
   summonOnce, summonTen, upgradeCost, canUpgrade, upgrade, type SummonResult,
 } from '../meta/summon';
+import { manaCap, manaCapCost, MANA_CAP_MAX_LV } from '../sim/economy';
 import { unitCard, rarityName, rarityColor } from './rarity';
 import { TYPE_BY_ID, type QType } from '../edu/curriculum';
 import { QuizSession } from '../edu/session';
@@ -413,7 +414,50 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
     timers.push(setTimeout(refreshHead, order.length * 220 + 50));
   }
 
+  // ── 셈력 그릇 강화 ─────────────────────────────────────────────────────
+  // 🔴 소환만 있으면 먹물의 쓸모가 '운'에만 걸린다. 확실히 좋아지는 사용처를 하나 둔다 —
+  //    저학년에겐 "모으면 반드시 좋아지는 것"이 뽑기보다 이해하기 쉽고 덜 좌절스럽다.
+  const capLine = el('div', { class: 'big' }, '');
+  const capNote = el('div', { class: 'muted' }, '');
+  const capBtn = btn('그릇 넓히기', () => upgradeMana(), 'btn');
+
+  function refreshCap(): void {
+    const d = store.load();
+    const lv = d.upgrades.mana;
+    const maxed = lv >= MANA_CAP_MAX_LV;
+    const cost = manaCapCost(lv);
+    capLine.textContent = maxed
+      ? `셈력 그릇 ${manaCap(lv)} · 최대`
+      : `셈력 그릇 ${manaCap(lv)} → ${manaCap(lv + 1)}`;
+    capNote.textContent = maxed
+      ? '더 넓힐 수 없어요. 이미 가장 큰 그릇이에요.'
+      : `${lv}단계 · 다음 단계 먹물 ${cost.toLocaleString('ko-KR')}`;
+    capBtn.textContent = maxed ? '가장 큰 그릇' : `그릇 넓히기 · 먹물 ${cost.toLocaleString('ko-KR')}`;
+    capBtn.disabled = maxed || d.currency.meokmul < cost;
+  }
+
+  function upgradeMana(): void {
+    const d = store.load();
+    const lv = d.upgrades.mana;
+    const cost = manaCapCost(lv);
+    if (lv >= MANA_CAP_MAX_LV || d.currency.meokmul < cost) return;
+    store.update((s) => { s.currency.meokmul -= cost; s.upgrades.mana = lv + 1; });
+    play('win');
+    refreshHead();
+    refreshCap();
+  }
+
+  const manaCard = el('div', { class: 'card' },
+    el('h3', {}, '셈력 그릇'),
+    capLine, capNote,
+    // 🔴 "넘치면 사라져요" 같은 손실 표현은 쓰지 않는다 — 저학년에게는 불안·좌절 신호가 된다.
+    //    같은 사실을 '용량'으로 말하고, 곧바로 해결책(넓히기)을 붙인다.
+    el('p', { class: 'muted fine' }, '그릇이 크면 셈력을 더 많이 담아 둘 수 있어요. 그릇이 가득 차면 더는 담기지 않으니, 넓혀 두면 좋아요.'),
+    capBtn,
+  );
+
   refreshHead();
+  refreshCap();
 
   const rateRows = probabilityTable().map((r) => {
     const row = el('div', { class: 'rate-row' },
@@ -436,6 +480,7 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
       ),
       stage,
       el('div', { class: 'row' }, one, ten),
+      manaCard,
       el('details', { class: 'card rates' },
         el('summary', {}, '나올 확률 보기'),
         ...rateRows,

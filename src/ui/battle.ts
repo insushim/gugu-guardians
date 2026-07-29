@@ -2,7 +2,7 @@ import { Battle } from '../sim/core';
 import { stageDef, stageBackground, MAX_SEC } from '../sim/stages';
 import { ALLY_BY_ID } from '../sim/units';
 import { rarityColor } from './rarity';
-import { MIN_ANSWER_MS } from '../sim/economy';
+import { comboMul, hasteLabel, MIN_ANSWER_MS } from '../sim/economy';
 import { FieldRenderer } from '../render/field';
 import { assetUrl } from '../render/assets';
 import { QuizSession } from '../edu/session';
@@ -20,7 +20,11 @@ import { bumpWeeklyNow } from '../meta/weekly';
  */
 
 const DT = 1 / 30;              // 시뮬 고정 타임스텝(초)
-const MAX_STEPS_PER_FRAME = 5;  // 탭 복귀 시 밀린 시간을 한 번에 몰아 돌리지 않는다
+/**
+ * 프레임당 스텝 상한. dtMs 는 250ms 로 잘리므로 한 프레임에 필요한 시뮬 시간은 최대 0.25초,
+ * 8스텝 = 0.267초라 **정상 동작 중에는 밀린 시간을 버리는 일이 없다**(탭 복귀 때만 발동).
+ */
+const MAX_STEPS_PER_FRAME = 8;
 
 export interface BattleResult {
   status: 'win' | 'lose' | 'draw';
@@ -37,24 +41,25 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   // 승급 레벨을 그대로 넘긴다 — 도감에서 키운 셈지기가 전장에서도 세져야 한다
   const levels: Record<string, number> = {};
   for (const [id, e] of Object.entries(save.roster)) levels[id] = e.level;
-  const battle = new Battle(stage, levels);
+  const battle = new Battle(stage, levels, save.upgrades.mana);
   const quiz = new QuizSession({ layer: 'L1', types: stage.quizTypes, save, seed: Date.now() % 100000 });
 
   // ── DOM ────────────────────────────────────────────────────────────────
   const manaFill = el('i');
   const manaText = el('b', { class: 'mana' }, '0');
   const comboText = el('b', { class: 'combo' }, '');
+  const speedText = el('b', { class: 'spd' }, '');
   const timeText = el('span', { class: 'muted' }, '');
   const pauseBtn = btn('⏸ 잠깐', () => togglePause(), 'btn sm ghost');
 
   const hud = el('div', { class: 'bhud' },
     el('span', {}, '셈력'),
     el('div', { class: 'gauge' }, manaFill),
-    manaText, comboText,
+    manaText, comboText, speedText,
     el('span', { class: 'spacer' }), timeText, pauseBtn,
   );
 
-  const deckCol = el('div', { class: 'deck-col' });
+  const deckCol = el('div', { class: 'deck-row' });
   const cards = deck.map((id) => {
     const def = ALLY_BY_ID.get(id)!;
     const cool = el('div', { class: 'cool' }, '');
@@ -79,7 +84,9 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   });
 
   const canvas = el('canvas', { id: 'field' }) as HTMLCanvasElement;
-  const fieldWrap = el('div', { class: 'field-wrap' }, deckCol, canvas);
+  // 🔴 덱은 전장이 아니라 **하단 조작줄**에 있다. 세로열에 두면 셈지기가 늘어날수록
+  //    전장을 잠식하고, 결국 세로 스크롤이 생겨 "지금 뽑을 수 있는 카드"가 화면 밖으로 나간다.
+  const fieldWrap = el('div', { class: 'field-wrap' }, canvas);
 
   const qAsk = el('div', { class: 'ask' }, '');
   const qLine = el('div', { class: 'q' }, '');
@@ -95,12 +102,28 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     else pad.append(btn(k, () => press(k)));
   }
 
-  const control = el('div', { class: 'control' }, quizBox, pad);
+  // 먹 대포 — 정답으로 차고, 다 차면 스스로 빛난다(설명 문구로 가르치지 않는다)
+  const cannonFill = el('i');
+  const cannonBtn = el('button', {
+    class: 'cannon', type: 'button', 'aria-label': '먹 대포 쏘기',
+  }, el('span', { class: 'ic' }, '💥'), el('span', { class: 'lb' }, '먹 대포'), cannonFill) as HTMLButtonElement;
+  cannonBtn.addEventListener('click', () => {
+    if (!battle.fireCannon()) return;
+    renderer.shake(9);
+    play('hit');
+    flash(cannonBtn);
+    syncCannon();
+  });
+
+  const sideCol = el('div', { class: 'side-col' }, cannonBtn);
+  const control = el('div', { class: 'control' }, deckCol, sideCol, quizBox, pad);
   const node = el('section', { class: 'screen battle' }, hud, fieldWrap, control);
 
   // ── 상태 ───────────────────────────────────────────────────────────────
   let current: Question | null = null;
   let typed = '';
+  /** 이 문제가 이미 채점됐나 — 같은 문제 재채점(파밍) 차단 */
+  let resolved = false;
   let askedAt = 0;
   let paused = false;
   let raf = 0;
@@ -119,6 +142,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   function nextQuestion() {
     current = quiz.next(battle.dda.level);
     typed = '';
+    resolved = false;
     askedAt = performance.now();
     qAsk.textContent = current.ask;
     drawQuestion();
@@ -131,7 +155,11 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   }
 
   function press(k: string) {
-    if (paused || !current || battle.status !== 'playing') return;
+    // 🔴 `resolved` 가 없으면 **같은 문제를 몇 번이고 다시 채점**할 수 있다.
+    //    채점 후 다음 문제까지 260ms(오답 공개는 1200ms) 동안 current 가 살아 있는데,
+    //    그동안 ⌫ 로 한 자 지우고 같은 답을 다시 넣으면 answer(true) 가 또 실행돼
+    //    셈력·대포·배속을 문제 하나로 무한히 채울 수 있었다(교차검증 지적, 코드로 재현 확인).
+    if (paused || !current || resolved || battle.status !== 'playing') return;
     if (k === 'back') { typed = typed.slice(0, -1); drawQuestion(); return; }
     const need = current.digits ?? 2;
     if (typed.length >= need) return;
@@ -148,17 +176,20 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   }
 
   function submit() {
-    if (!current) return;
+    if (!current || resolved) return;
     const ms = performance.now() - askedAt;
     const value = Number(typed);
     const res = quiz.submit(value, ms);
     // 🔴 0.4초 미만 입력은 콤보로 인정하지 않는다(연타·찍기 방지)
     const counts = ms >= MIN_ANSWER_MS;
     if (res.correct) {
+      resolved = true;                       // 이 문제는 끝났다 — 재채점 금지
       const gained = battle.answer(true, ms, counts);
       play('correct');
       qFb.className = 'fb ok';
-      qFb.textContent = `잘했어! +${Math.round(gained)}`;
+      // 🔴 그릇이 꽉 차 실제로 못 받은 만큼을 "+46" 이라 적으면 아이에게 거짓말이 된다.
+      //    answer() 가 돌려주는 값은 **실제로 담긴 양**이다.
+      qFb.textContent = gained > 0 ? `잘했어! +${Math.round(gained)}` : '잘했어! 셈력 그릇이 가득 찼어요';
       setTimeout(() => { if (battle.status === 'playing') nextQuestion(); }, 260);
     } else {
       battle.answer(false, ms);
@@ -168,6 +199,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       void quizBox.offsetWidth;
       quizBox.classList.add('shake');
       if (res.reveal) {
+        resolved = true;               // 정답을 보여 줬으므로 이 문제로 더 얻을 수 없다
         qFb.textContent = `정답은 ${res.answer}. ${res.hint}`;
         setTimeout(() => { if (battle.status === 'playing') nextQuestion(); }, 1200);
       } else {
@@ -196,11 +228,22 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     }
   }
 
+  function syncCannon() {
+    const ready = battle.cannonReady;
+    cannonFill.style.height = `${Math.round(battle.cannonCharge * 100)}%`;
+    cannonBtn.classList.toggle('ready', ready);
+    cannonBtn.disabled = !ready;
+  }
+
   function syncHud() {
-    const maxShown = 600;
-    manaFill.style.width = `${Math.min(100, (battle.money / maxShown) * 100)}%`;
-    manaText.textContent = String(Math.floor(battle.money));
-    comboText.textContent = battle.combo >= 3 ? `콤보 ×${battle.snapshot().comboMul.toFixed(1)} ⚡${battle.combo}` : '';
+    // 🔴 게이지 기준은 **실제 그릇**이다. 예전엔 600 고정이라 상한이 없는데도 꽉 찬 것처럼 보였다.
+    const full = battle.money >= battle.manaMax;
+    manaFill.style.width = `${Math.min(100, (battle.money / battle.manaMax) * 100)}%`;
+    manaFill.classList.toggle('full', full);
+    manaText.textContent = `${Math.floor(battle.money)} / ${battle.manaMax}`;
+    manaText.classList.toggle('full', full);
+    comboText.textContent = battle.combo >= 3 ? `콤보 ×${comboMul(battle.combo).toFixed(1)} ⚡${battle.combo}` : '';
+    speedText.textContent = hasteLabel(battle.haste);
     timeText.textContent = `${Math.floor(battle.t)}초 / ${MAX_SEC}초`;
   }
 
@@ -232,6 +275,8 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     const dtMs = Math.min(250, ts - lastTs);
     lastTs = ts;
     playMs += dtMs;
+    // 🔴 신바람은 **아군 유닛에만** 걸린다. 여기(세상의 시계)에는 손대지 않는다 —
+    //    시간을 압축하면 같은 판에서 푸는 문제 수가 줄어 학습량 하한이 깨진다(실측).
     acc += dtMs / 1000;
     let steps = 0;
     while (acc >= DT && steps < MAX_STEPS_PER_FRAME) {
@@ -249,9 +294,18 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     }
 
     renderer.draw(battle, ts);
-    window.__gugu__ = { ...(window.__gugu__ ?? {}), units: battle.units.length, t: battle.t, status: battle.status };
+    // 🔴 검수 하네스는 여기서 값을 읽는다. 화면 글자를 파싱하게 두면 표기를 바꾼 순간
+    //    ("123" → "123 / 960") 검사가 NaN 으로 조용히 무너진다 — 실제로 한 번 그랬다.
+    window.__gugu__ = {
+      ...(window.__gugu__ ?? {}),
+      units: battle.units.length, t: battle.t, status: battle.status,
+      money: battle.money, manaMax: battle.manaMax, haste: battle.haste,
+      // 가속은 순간값이라 스냅샷 시점엔 이미 풀려 있을 수 있다 — 최고치를 따로 남긴다
+      maxHasteSeen: Math.max(Number(window.__gugu__?.['maxHasteSeen'] ?? 1), battle.haste),
+    };
     syncHud();
     syncDeck();
+    syncCannon();
 
     if (battle.status !== 'playing') finish();
   }

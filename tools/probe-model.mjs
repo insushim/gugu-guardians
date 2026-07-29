@@ -40,6 +40,7 @@ const VOLUME_CAP_STAGE = 30;
 const ENDLESS_STEP = 1.05;
 const BOSSES = ['e_boss', 'e_boss2', 'e_boss3'];
 const TYPE_ORDER = ['A1', 'S1', 'A2', 'M1', 'S2', 'AS1', 'M2', 'D1', 'AS2', 'M3', 'D2'];
+export const REVIEW_WINDOW = 6;
 
 const WAVES = [
   ['e_mul',    1,  3,  9.0,  4.0, 0.30],
@@ -54,7 +55,12 @@ const WAVES = [
 ];
 const BOSS_SHARE = 0.5, BOSS_MOB_SHARE = 0.75, PER_WAVE_CAP = 40;
 export const BUDGET_SLOPE = 0.10;
-export const CASTLE_K = 30000;
+export const CASTLE_K = 42000;
+// 판 길이 램프 — src/sim/stages.ts 의 lengthRamp 와 1:1 (tests/parity.spec.ts 가 대조)
+export const LEN_RAMP_END = 12;
+export const LEN_RAMP_MIN = 0.50;
+export const lengthRamp = (n) =>
+  LEN_RAMP_MIN + (1 - LEN_RAMP_MIN) * Math.min(1, Math.max(0, (n - 1) / (LEN_RAMP_END - 1)));
 export const REWARD_SLOPE_RATIO = 1.6;
 const ENEMY_HP = Object.fromEntries(ENEMIES.map((e) => [e.id, e.hp]));
 
@@ -72,12 +78,14 @@ export const enemyMult = (n) => allyGrowth(n) * Math.pow(ENDLESS_STEP, Math.max(
 
 export function quizTypesFor(n) {
   const open = TYPE_ORDER.slice(0, Math.min(TYPE_ORDER.length, 2 + Math.floor((n - 1) / 3)));
+  // 복습은 최근 배운 것 안에서만 — src/sim/stages.ts 의 REVIEW_WINDOW 와 1:1
+  const pool = open.slice(Math.max(0, open.length - REVIEW_WINDOW));
   const picks = [];
   const add = (t) => { if (t && !picks.includes(t)) picks.push(t); };
-  add(open[open.length - 1]);
-  add(open[(n * 3) % open.length]);
-  add(open[(n * 7 + 2) % open.length]);
-  for (let i = 0; i < open.length && picks.length < Math.min(3, open.length); i++) add(open[i]);
+  add(pool[pool.length - 1]);
+  add(pool[(n * 3) % pool.length]);
+  add(pool[(n * 7 + 2) % pool.length]);
+  for (let i = pool.length - 1; i >= 0 && picks.length < Math.min(3, pool.length); i--) add(pool[i]);
   return picks.sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b));
 }
 
@@ -113,7 +121,7 @@ export function stageDef(index) {
     chapter,
     pos: posOf(n),
     mult: enemyMult(n),
-    castleHp: Math.round(CASTLE_K * growth * (boss ? 0.7 : 1)),
+    castleHp: Math.round(CASTLE_K * growth * lengthRamp(n) * (boss ? 0.7 : 1)),
     playerCastleHp: Math.round(3400 * growth),
     spawns,
     quizTypes: quizTypesFor(n),
@@ -132,6 +140,24 @@ export const tBad = (acc) => tOk(acc) + 1.6;
 export const comboMul = (c) => (c >= 8 ? 1.6 : c >= 5 ? 1.4 : c >= 3 ? 1.2 : 1.0);
 // 🔴 바닥선을 스테이지와 함께 크게 키우면 후반에도 '찍기'가 통한다(v1 실측).
 export const BASE_REGEN = (st) => 5.8 + Math.min(1.6, (Math.min(st, 10) - 1) * 0.2);
+
+// 셈력 그릇·배속 — src/sim/economy.ts 와 1:1 (tests/parity.spec.ts 가 대조)
+// 🔴 기본 상한은 로스터에서 유도한다 — 가장 비싼 셈지기보다 작으면 그 유닛이 소환 불가가 된다
+export const MANA_CAP_BASE = Math.max(
+  600,
+  Math.max(...ALLIES.map((u) => u.cost)) + Math.min(...ALLIES.map((u) => u.cost)) * 2,
+);
+export const MANA_CAP_STEP = 180, MANA_CAP_MAX_LV = 6;
+export const manaCap = (lv) => MANA_CAP_BASE + Math.max(0, Math.min(MANA_CAP_MAX_LV, Math.floor(lv))) * MANA_CAP_STEP;
+// 신바람(아군 가속) — 세상의 시계가 아니라 **아군 유닛**만 빨라진다
+export const HASTE_MAX = 1.8, HASTE_PER_CORRECT = 0.22, HASTE_DECAY = 0.08;
+export const hasteOf = (b) => 1 + Math.max(0, Math.min(HASTE_MAX - 1, b));
+
+// 먹 대포 — src/sim/economy.ts 와 1:1
+export const CANNON_PER_CORRECT = 0.09, CANNON_KNOCKBACK = 90;
+// 프로브 전용 보수 가정: 아이가 '다 찼다'를 알아채고 누르기까지의 지연(초)
+export const CANNON_REACT_SEC = 6;
+export const cannonDamage = (budget) => budget * 0.05;
 
 // DDA: 연속 오답 2회 → 1단계 하향(체감 정답률 +10%p), 대신 보상 -30%/단계
 export const DDA_STEP_ACC = 0.10, DDA_MAX = 3, DDA_REWARD_PENALTY = 0.30;
@@ -182,7 +208,12 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
   const lvOf = (id) => (roster ? roster[id] ?? 1 : 1);
 
   let t = 0;
-  let money = START_MONEY;
+  // 그릇은 강화 0단계(새 아이) 기준으로 잰다 — 게이트는 가장 불리한 쪽을 통과해야 한다
+  const cap = manaCap(0);
+  let money = Math.min(START_MONEY, cap);
+  let hasteBoost = 0;
+  let cannon = 0;
+  let cannonFullAt = -1;   // 다 찬 시각(반응 지연 계산용)
   let combo = 0;
   let nextQuizAt = 1.5;
   let solved = 0, correct = 0;
@@ -203,7 +234,9 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
       const effAcc = Math.min(0.99, accuracy + ddaLevel * DDA_STEP_ACC);
       if (rng() < effAcc) {
         correct++;
-        money += rewardBase(st) * comboMul(combo) * (1 - ddaLevel * DDA_REWARD_PENALTY);
+        money = Math.min(cap, money + rewardBase(st) * comboMul(combo) * (1 - ddaLevel * DDA_REWARD_PENALTY));
+        hasteBoost = Math.min(HASTE_MAX - 1, hasteBoost + HASTE_PER_CORRECT);
+        cannon = Math.min(1, cannon + CANNON_PER_CORRECT);
         combo++;
         wrongStreak = 0; rightStreak++;
         if (rightStreak >= 3 && ddaLevel > 0) { ddaLevel--; rightStreak = 0; }
@@ -216,7 +249,27 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
       }
     }
     // 2) 자동 수급(학습을 전혀 안 해도 진행은 되게 하는 바닥선)
-    money += BASE_REGEN(st) * DT;
+    money = Math.min(cap, money + BASE_REGEN(st) * DT);
+    hasteBoost = Math.max(0, hasteBoost - HASTE_DECAY * DT);
+
+    // 2-b) 먹 대포 — 다 차면 **알아채고** 쏜다.
+    //   🔴 "충전되는 즉시 자동 발사"로 두면 아이보다 프로브가 더 잘 쓰는 게 되어
+    //      게이트가 실제보다 후하게 나온다. 게이트는 **못 쓰는 쪽으로 치우쳐야** 안전하다.
+    //      그래서 (a) 다 찬 뒤 반응 지연을 두고 (b) 적이 둘 이상 몰렸을 때만 쓴다 —
+    //      아이는 게이지를 계속 쳐다보지 않고, 밀린다고 느낄 때 누른다.
+    if (cannon >= 1 && cannonFullAt < 0) cannonFullAt = t;
+    if (cannon >= 1 && t - cannonFullAt >= CANNON_REACT_SEC) {
+      const live = units.filter((u) => u.side === -1 && u.hp > 0);
+      if (live.length >= 2) {
+        cannon = 0;
+        cannonFullAt = -1;
+        const dmg = cannonDamage(enemyBudget(st)) * allyGrowth(st);
+        for (const u of live) {
+          u.hp -= dmg;
+          if (u.spd > 0) u.x = Math.min(MAP_LEN, u.x + CANNON_KNOCKBACK);
+        }
+      }
+    }
 
     // 3) 아군 소환 — 살 수 있는 것 중 가장 비싼 것.
     //    "예비금 규칙": 고코스트를 사도 최저가 유닛 2기분은 남겨 전선이 비지 않게 한다.
@@ -254,9 +307,11 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
       }
     }
 
-    // 5) 전투 / 이동
+    // 5) 전투 / 이동 — 신바람은 아군에게만 걸린다(src/sim/core.ts 와 동일)
+    const haste = hasteOf(hasteBoost);
     for (const u of units) {
       if (u.hp <= 0) continue;
+      const hs = u.side === 1 ? haste : 1;
       let target = null, best = Infinity;
       for (const v of units) {
         if (v.side === u.side || v.hp <= 0) continue;
@@ -267,14 +322,14 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
       if (!target && castleDist <= u.range) {
         if (t >= u.atkAt) {
           if (u.side === 1) enCastle -= u.atk; else myCastle -= u.atk;
-          u.atkAt = t + u.aspd;
+          u.atkAt = t + u.aspd / hs;
         }
         continue;
       }
       if (target) {
-        if (t >= u.atkAt) { target.hp -= u.atk; u.atkAt = t + u.aspd; }
+        if (t >= u.atkAt) { target.hp -= u.atk; u.atkAt = t + u.aspd / hs; }
       } else {
-        u.x += u.side * u.spd * DT;
+        u.x += u.side * u.spd * hs * DT;
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
     }

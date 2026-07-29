@@ -40,7 +40,7 @@ const BOSSES = ['e_boss', 'e_boss2', 'e_boss3'];
 const POS_NAMES: readonly string[] = ['어귀', '오솔길', '건널목', '너른터', '갈림길', '비탈', '숲그늘', '돌다리', '고갯마루', '수문장'];
 
 /** 문항 유형 개방 순서 — src/edu/curriculum.ts 의 난이도(baseB) 오름차순과 일치해야 한다 */
-const TYPE_ORDER: QType[] = ['A1', 'S1', 'A2', 'M1', 'S2', 'AS1', 'M2', 'D1', 'AS2', 'M3', 'D2'];
+export const TYPE_ORDER: QType[] = ['A1', 'S1', 'A2', 'M1', 'S2', 'AS1', 'M2', 'D1', 'AS2', 'M3', 'D2'];
 
 export function chapterOf(index: number): number {
   return Math.floor((index - 1) / CHAPTER_LEN) + 1;
@@ -80,16 +80,26 @@ export function enemyMult(index: number): number {
 /**
  * 이 판에서 낼 문항 유형 — 최신 개방 유형 + 복습 2종.
  * 🔴 회전 인덱스가 겹쳐 한 종류만 남는 판이 생긴다(1판이 실제로 '뺄셈' 하나뿐이었다).
- *    개방된 유형이 2종 이상이면 반드시 2종 이상 나오도록 앞에서부터 채운다.
+ *    개방된 유형이 2종 이상이면 반드시 2종 이상 나오도록 **최신 쪽부터** 채운다.
  */
+export const REVIEW_WINDOW = 6;
+
 export function quizTypesFor(index: number): QType[] {
   const open = TYPE_ORDER.slice(0, Math.min(TYPE_ORDER.length, 2 + Math.floor((index - 1) / 3)));
+  /**
+   * 🔴 복습은 **최근에 배운 것 안에서만** 돈다.
+   *    예전엔 회전 인덱스가 겹칠 때 채우기 루프가 `open[0]`부터 시작해서,
+   *    40판(나눗셈 구간)에서도 **'한 자리 덧셈'이 세 유형 중 하나로** 나왔다.
+   *    4학년에게 3+2 를 풀리는 건 시간 낭비이고, "뒤로 갈수록 어려워진다"는 약속도 깬다.
+   *    아주 오래된 내용의 유지는 판 구성이 아니라 SRS(src/edu/srs.ts)가 담당한다.
+   */
+  const pool = open.slice(Math.max(0, open.length - REVIEW_WINDOW));
   const picks: QType[] = [];
   const add = (t: QType | undefined): void => { if (t && !picks.includes(t)) picks.push(t); };
-  add(open[open.length - 1]);
-  add(open[(index * 3) % open.length]);
-  add(open[(index * 7 + 2) % open.length]);
-  for (let i = 0; i < open.length && picks.length < Math.min(3, open.length); i++) add(open[i]);
+  add(pool[pool.length - 1]);
+  add(pool[(index * 3) % pool.length]);
+  add(pool[(index * 7 + 2) % pool.length]);
+  for (let i = pool.length - 1; i >= 0 && picks.length < Math.min(3, pool.length); i--) add(pool[i]);
   // 쉬운 것부터 보여 준다 — 아이가 읽는 순서와 배운 순서를 맞춘다
   return picks.sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b));
 }
@@ -121,8 +131,30 @@ const WAVES: [string, number, number, number, number, number][] = [
  */
 export const BUDGET_SLOPE = 0.10;
 
-/** 성 체력 계수 — 성은 아군 성장과 자동 상쇄되므로 난이도가 아니라 **판 길이**를 정한다 */
-const CASTLE_K = 30000;
+/**
+ * 성 체력 계수 — 성은 아군 성장과 자동 상쇄되므로 난이도가 아니라 **판 길이**를 정한다.
+ * 🔴 신바람(아군 가속)을 넣으면서 30000 → 42000 으로 올렸다. 아군이 빨라진 만큼 판이
+ *    짧아져 ST1~ST30 전 구간이 목표 길이(55~240초) 아래로 떨어졌기 때문이다(G1 8건 FAIL).
+ *    기능을 넣으면 길이 계수도 같이 봐야 한다 — 둘은 같은 값을 다르게 미는 손잡이다.
+ */
+const CASTLE_K = 42000;
+
+/**
+ * 판 길이 램프 — 첫 판은 짧게, 캠페인 중반에 기준 길이에 도달한다.
+ *
+ * 🔴 왜 필요한가: 성 체력이 아군 성장과 정확히 같은 속도로 커지면 **모든 판의 길이가 같다.**
+ *    ST1 도 ST30 과 같은 길이가 되어 "첫 판인데 왜 안 끝나지"가 된다(사용자 실플레이 보고).
+ *    난이도(적 예산·배율)는 그대로 두고 **길이만** 초반에 줄인다 — 그래야 G2(정확도 60%
+ *    무소환 클리어)에 손대지 않고 체감만 고친다.
+ * 🔴 우리 성에는 이 램프를 걸지 않는다. 우리 성 체력은 "버틸 수 있는 시간"이라 줄이면
+ *    초반이 오히려 어려워진다 — 방향이 반대다.
+ */
+const LEN_RAMP_END = 12;
+const LEN_RAMP_MIN = 0.50;
+export function lengthRamp(index: number): number {
+  const t = Math.min(1, Math.max(0, (index - 1) / (LEN_RAMP_END - 1)));
+  return LEN_RAMP_MIN + (1 - LEN_RAMP_MIN) * t;
+}
 
 /** 한 판에 나오는 적의 기준 총 체력(배율 적용 전). 볼륨은 캠페인 끝에서 멈춘다. */
 export function enemyBudget(index: number): number {
@@ -177,7 +209,7 @@ export function stageDef(index: number): StageDef {
     bg: stageBackground(n),
     mult,
     // 보스 판은 수문장 자체가 관문이라 성 체력을 낮춘다
-    castleHp: Math.round(CASTLE_K * growth * (boss ? 0.7 : 1)),
+    castleHp: Math.round(CASTLE_K * growth * lengthRamp(n) * (boss ? 0.7 : 1)),
     playerCastleHp: Math.round(3400 * growth),
     spawns,
     quizTypes: quizTypesFor(n),

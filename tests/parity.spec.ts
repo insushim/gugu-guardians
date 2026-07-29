@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { ALLIES, ENEMIES, DECK_SIZE, ALLY_CAP, defaultDeck, progressionAllies, RARITIES } from '../src/sim/units';
 import { stageDef, allyGrowth, enemyMult, enemyBudget, quizTypesFor, MAX_SEC, MAP_LEN, CAMPAIGN_STAGES } from '../src/sim/stages';
 import { REWARD, START_MONEY, baseRegen, comboMul, rewardBase, DDA_MAX, DDA_REWARD_PENALTY, DDA_WRONG_TRIGGER } from '../src/sim/economy';
+import { manaCap, MANA_CAP_BASE, MANA_CAP_MAX_LV, hasteOf, HASTE_MAX, HASTE_PER_CORRECT, HASTE_DECAY, cannonDamage, CANNON_PER_CORRECT, CANNON_KNOCKBACK } from '../src/sim/economy';
+import { lengthRamp } from '../src/sim/stages';
 // @ts-expect-error — 프로브 모델은 순수 JS다(Node 로 그대로 돌려야 해서 TS로 두지 않는다)
 import * as probe from '../tools/probe-model.mjs';
 
@@ -103,6 +105,24 @@ describe('경제 상수 대조', () => {
   it('맵 길이·제한 시간이 일치한다', () => {
     expect(MAP_LEN).toBe(probe.MAP_LEN);
     expect(MAX_SEC).toBe(probe.MAX_SEC);
+  });
+
+  /** 🔴 신바람·그릇은 게이트 결과를 바꾼다. 프로브만 옛 식이면 "통과"가 거짓이 된다. */
+  it('셈력 그릇·신바람·판 길이 램프가 일치한다', () => {
+    expect(MANA_CAP_BASE).toBe(probe.MANA_CAP_BASE);
+    expect(MANA_CAP_MAX_LV).toBe(probe.MANA_CAP_MAX_LV);
+    for (let lv = -2; lv <= MANA_CAP_MAX_LV + 2; lv++) expect(manaCap(lv), `${lv}단계`).toBe(probe.manaCap(lv));
+
+    expect(HASTE_MAX).toBeCloseTo(probe.HASTE_MAX, 9);
+    expect(HASTE_PER_CORRECT).toBeCloseTo(probe.HASTE_PER_CORRECT, 9);
+    expect(HASTE_DECAY).toBeCloseTo(probe.HASTE_DECAY, 9);
+    for (const b of [0, 0.22, 1, 1.5, 3]) expect(hasteOf(b), `부스트 ${b}`).toBeCloseTo(probe.hasteOf(b), 9);
+
+    for (let n = 1; n <= 40; n++) expect(lengthRamp(n), `${n}판 램프`).toBeCloseTo(probe.lengthRamp(n), 9);
+
+    expect(CANNON_PER_CORRECT).toBeCloseTo(probe.CANNON_PER_CORRECT, 9);
+    expect(CANNON_KNOCKBACK).toBe(probe.CANNON_KNOCKBACK);
+    for (const b of [2340, 5000, 9000]) expect(cannonDamage(b)).toBeCloseTo(probe.cannonDamage(b), 9);
   });
 
   it('콤보 배율 경계가 표와 정확히 일치한다', () => {

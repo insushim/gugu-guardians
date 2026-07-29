@@ -1,8 +1,9 @@
-import type { BattleSnapshot, BattleStatus, LiveUnit, StageDef } from './types';
+import type { BattleStatus, LiveUnit, StageDef } from './types';
 import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult } from './units';
-import { allyGrowth, MAP_LEN, MAX_SEC } from './stages';
+import { allyGrowth, enemyBudget, MAP_LEN, MAX_SEC } from './stages';
 import {
-  baseRegen, comboMul, newDda, rewardFor, START_MONEY, stepDda,
+  baseRegen, cannonDamage, CANNON_KNOCKBACK, CANNON_PER_CORRECT, HASTE_DECAY, HASTE_MAX,
+  HASTE_PER_CORRECT, hasteOf, manaCap, newDda, rewardFor, START_MONEY, stepDda,
   type DdaState,
 } from './economy';
 
@@ -28,6 +29,12 @@ export class Battle {
   solved = 0;
   correct = 0;
   answerMs = 0;
+  /** 셈력 그릇(상한) — 먹물로 키운 단계에서 온다 */
+  readonly manaMax: number;
+  /** 신바람 부스트. 정답으로 오르고 시간으로 풀린다 — **아군에게만** 걸린다 */
+  hasteBoost = 0;
+  /** 먹 대포 충전(0~1). 정답으로만 찬다 */
+  cannonCharge = 0;
 
   private uidSeq = 1;
   private growth: number;
@@ -40,13 +47,49 @@ export class Battle {
   /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
   private levels: Readonly<Record<string, number>>;
 
-  constructor(stage: StageDef, levels: Readonly<Record<string, number>> = {}) {
+  constructor(stage: StageDef, levels: Readonly<Record<string, number>> = {}, manaLevel = 0) {
     this.stage = stage;
     this.levels = levels;
     this.growth = allyGrowth(stage.index);
     this.castleHp = stage.castleHp;
     this.playerCastleHp = stage.playerCastleHp;
+    this.manaMax = manaCap(manaLevel);
+    this.money = Math.min(START_MONEY, this.manaMax);
     for (const s of stage.spawns) this.spawnNext.set(s.id, s.t0);
+  }
+
+  /** 지금 아군에게 걸린 가속 배율(1.0~HASTE_MAX) */
+  get haste(): number {
+    return hasteOf(this.hasteBoost);
+  }
+
+  get cannonReady(): boolean {
+    return this.cannonCharge >= 1 && this.status === 'playing';
+  }
+
+  /**
+   * 먹 대포 발사 — 전장의 **적 전체**에 피해를 주고 뒤로 민다.
+   * 아군은 건드리지 않는다(저학년 게임에서 "내 편이 다치는 버튼"은 이해 비용이 크다).
+   * @returns 실제로 쐈으면 true
+   */
+  fireCannon(): boolean {
+    if (!this.cannonReady) return false;
+    this.cannonCharge = 0;
+    // 🔴 예산만 쓰면(성장 배율 없이) ST60 에서 보스 체력의 0.16% 가 되어 장식이 된다.
+    //    그렇다고 stage.mult 를 곱하면 무한구간 발산(1.05^n)까지 따라가 **소환이 무의미**해진다
+    //    (실측: 캠페인 로스터만으로 ST60 도달 → 게이트 '소환 무의미' FAIL).
+    //    그래서 **아군 성장선(allyGrowth)** 에 묶는다 — 캠페인 동안은 위력을 유지하고,
+    //    무한구간에서는 아군과 함께 뒤처진다. 그 격차를 메우는 게 소환·승급의 역할이다.
+    const dmg = cannonDamage(enemyBudget(this.stage.index)) * this.growth;
+    for (const u of this.units) {
+      if (u.side !== -1 || u.hp <= 0) continue;
+      u.hp -= dmg;
+      u.hurtAt = this.t;
+      // 고정형(수문장)은 밀리지 않는다 — 밀면 성 안으로 파고들어 사거리 판정이 깨진다
+      if (u.spd > 0) u.x = Math.min(MAP_LEN, u.x + CANNON_KNOCKBACK);
+      this.events.push({ type: 'hit', x: u.x, side: -1 });
+    }
+    return true;
   }
 
   get aliveAllies(): number {
@@ -99,8 +142,16 @@ export class Battle {
     let gained = 0;
     if (correct) {
       this.correct++;
-      gained = rewardFor(this.combo, this.dda.level, this.stage.index);
-      this.money += gained;
+      const reward = rewardFor(this.combo, this.dda.level, this.stage.index);
+      // 🔴 그릇을 넘겨 받지 않는다 — 넘친 만큼은 버려진다. 그래야 "쌓아 두기"가 최적이 안 된다.
+      //    돌려주는 값은 **실제로 담긴 양**이다. 명목 보상을 돌려주면 화면이 아이에게 거짓말을 한다.
+      const before = this.money;
+      this.money = Math.min(this.manaMax, this.money + reward);
+      gained = this.money - before;
+      // 🔴 부스트에도 상한을 건다. hasteOf() 만 클램프하면 내부 값이 무한히 쌓여
+      //    50문제 연속 정답 뒤 최고 가속이 50초 넘게 고정된다("손 놓으면 풀린다"가 깨진다).
+      this.hasteBoost = Math.min(HASTE_MAX - 1, this.hasteBoost + HASTE_PER_CORRECT);
+      this.cannonCharge = Math.min(1, this.cannonCharge + CANNON_PER_CORRECT);
       if (countsForCombo) this.combo++;
     } else {
       this.combo = 0;
@@ -113,7 +164,8 @@ export class Battle {
   step(dt: number): void {
     if (this.status !== 'playing') return;
     this.t += dt;
-    this.money += baseRegen(this.stage.index) * dt;
+    this.money = Math.min(this.manaMax, this.money + baseRegen(this.stage.index) * dt);
+    this.hasteBoost = Math.max(0, this.hasteBoost - HASTE_DECAY * dt);
 
     this.spawnEnemies();
     this.combat(dt);
@@ -164,8 +216,12 @@ export class Battle {
     for (const u of this.units) if (u.side === 1 && u.hp > 0) allyFront = Math.max(allyFront, u.x);
     const enemyFloor = allyFront === -Infinity ? 0 : Math.max(0, allyFront - 60);
 
+    // 신바람은 **아군에게만** 걸린다 — 공격 간격이 짧아지고 걸음이 빨라진다.
+    const haste = this.haste;
+
     for (const u of this.units) {
       if (u.hp <= 0) continue;
+      const hs = u.side === 1 ? haste : 1;
       let target: LiveUnit | null = null;
       let best = Infinity;
       for (const v of this.units) {
@@ -179,7 +235,7 @@ export class Battle {
         if (this.t >= u.atkAt) {
           if (u.side === 1) this.castleHp -= u.atk;
           else this.playerCastleHp -= u.atk;
-          u.atkAt = this.t + u.aspd;
+          u.atkAt = this.t + u.aspd / hs;
           u.swingAt = this.t;
           this.events.push({ type: 'castleHit', x: u.x, side: u.side });
         }
@@ -190,12 +246,12 @@ export class Battle {
         if (this.t >= u.atkAt) {
           target.hp -= u.atk;
           target.hurtAt = this.t;
-          u.atkAt = this.t + u.aspd;
+          u.atkAt = this.t + u.aspd / hs;
           u.swingAt = this.t;
           this.events.push({ type: 'hit', x: target.x, side: target.side });
         }
       } else if (u.spd > 0) {
-        u.x += u.side * u.spd * dt;
+        u.x += u.side * u.spd * hs * dt;
         if (u.side === -1) u.x = Math.max(enemyFloor, u.x);
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
@@ -212,22 +268,4 @@ export class Battle {
     }
   }
 
-  snapshot(): BattleSnapshot {
-    return {
-      t: this.t,
-      money: this.money,
-      combo: this.combo,
-      comboMul: comboMul(this.combo),
-      ddaLevel: this.dda.level,
-      units: this.units,
-      castleHp: this.castleHp,
-      castleMaxHp: this.stage.castleHp,
-      playerCastleHp: this.playerCastleHp,
-      playerCastleMaxHp: this.stage.playerCastleHp,
-      status: this.status,
-      solved: this.solved,
-      correct: this.correct,
-      answerMs: this.answerMs,
-    };
-  }
 }

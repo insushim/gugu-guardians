@@ -115,20 +115,3 @@ export interface LiveUnit {
 
 export type BattleStatus = 'playing' | 'win' | 'lose' | 'draw';
 
-export interface BattleSnapshot {
-  t: number;
-  money: number;
-  combo: number;
-  comboMul: number;
-  ddaLevel: number;
-  units: LiveUnit[];
-  castleHp: number;
-  castleMaxHp: number;
-  playerCastleHp: number;
-  playerCastleMaxHp: number;
-  status: BattleStatus;
-  solved: number;
-  correct: number;
-  /** 문항 응답에 쓴 누적 시간(ms) — 문항 밀도 지표용 */
-  answerMs: number;
-}
