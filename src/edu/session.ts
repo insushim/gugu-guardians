@@ -34,6 +34,8 @@ export interface SubmitResult {
 }
 
 const RECENT_MAX = 12;
+/** 복습을 끼우는 주기 — 3문항에 1개 (나머지는 새 문항) */
+const REVIEW_EVERY = 3;
 
 export class QuizSession {
   readonly layer: Layer;
@@ -43,6 +45,8 @@ export class QuizSession {
   private now: DayStr;
   private recent: string[] = [];
   private attemptsInSession = 0;
+  /** 이 세션에서 출제한 문항 수 — 복습 끼우기 주기 계산용 */
+  private served = 0;
   /** 같은 문항에서 틀린 횟수 (2회면 정답 공개) */
   private wrongOnCurrent = 0;
   current: Question | null = null;
@@ -72,10 +76,19 @@ export class QuizSession {
     const targetP = this.layer === 'L1' ? 0.85 : 0.6;
 
     // ① SRS 우선 — 단, 이 판의 유형에 속하는 것만(엉뚱한 단원이 튀어나오지 않게)
-    const due = dueQueue(Object.values(this.save.edu.srs), 8, this.now)
-      .filter((it) => this.types.includes(it.key.split(':')[0] as QType))
+    // 🔴 **거르고 나서 자른다.** 반대로 하면(먼저 8개로 자르고 유형 필터) 복습 밀린 항목이
+    //    쌓일수록 상위 8개가 죄다 다른 단원이 되어 필터가 전부 걸러내고, **복습이 조용히 멈춘다.**
+    //    실측: 20판에서 기한 도래 129개인데 상위 8개 중 이 판 유형은 0개 → SRS 경로 미발화.
+    //    srs.ts 가 경고해 둔 "고정 slice" 함정이 호출부에서 되살아난 형태다.
+    const mine = Object.values(this.save.edu.srs)
+      .filter((it) => this.types.includes(it.key.split(':')[0] as QType));
+    const due = dueQueue(mine, 8, this.now)
       .filter((it) => !this.recent.includes(it.key));
-    const pickedDue: SrsItem | undefined = due[0];
+    // 🔴 복습을 **무조건 우선**으로 두면 반대쪽으로 넘어간다. 밀린 항목이 늘 존재하므로
+    //    새 문항이 거의 안 나오고, 30판 동안 서로 다른 식이 287개 → 119개로 줄었다(실측).
+    //    복습과 새 문항은 섞여야 한다 — 세 문항에 하나꼴로 복습을 끼운다.
+    const reviewTurn = this.served % REVIEW_EVERY === REVIEW_EVERY - 1;
+    const pickedDue: SrsItem | undefined = reviewTurn ? due[0] : undefined;
     if (pickedDue) {
       const type = pickedDue.key.split(':')[0] as QType;
       const q = fromKey(pickedDue.key, pickLevel(type, this.thetaOf(type), targetP, ddaLevel));
@@ -91,6 +104,7 @@ export class QuizSession {
   }
 
   private setCurrent(q: Question): void {
+    this.served++;
     this.current = q;
     this.wrongOnCurrent = 0;
     this.tainted = false;

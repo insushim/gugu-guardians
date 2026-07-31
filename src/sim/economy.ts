@@ -182,3 +182,12 @@ export const CANNON_KNOCKBACK = 90;       // 뒤로 밀어내는 거리(맵 길�
 export function cannonDamage(enemyBudget: number): number {
   return enemyBudget * 0.05;
 }
+
+/**
+ * 대포 한 발이 **적 성**에 주는 피해 — 그 판 성 체력의 비율.
+ * 🔴 적에게만 피해를 주면, 전선이 적 성까지 밀고 올라가 화면에 적이 없는 동안
+ *    누를 때마다 충전만 사라지고 아무 일도 안 일어난다(실측: 1판 28초 이후 적군 0마리).
+ *    0.03 = 정답 12개로 한 발, 한 발이 성의 3%. 대포만으로 성을 깨려면 400문항이 필요하니
+ *    "소환 무의미" 쪽으로 기울지 않는다.
+ */
+export const CANNON_CASTLE_SHARE = 0.03;

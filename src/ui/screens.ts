@@ -1,7 +1,7 @@
 import { el, btn, stars, type Teardown } from './dom';
 import * as store from '../save/store';
 import {
-  ALLIES, RARITIES, DECK_SIZE, defaultDeck, progressionAllies,
+  ALLIES, RARITIES, DECK_SIZE, reconcileDeck, progressionAllies,
   maxLevel, rarityRank, ALLY_BY_ID,
 } from '../sim/units';
 import {
@@ -85,7 +85,11 @@ export function menuScreen(go: Go): { node: HTMLElement } {
         ...(boardEnabled() ? [btn('주간 순위', () => go('board'), 'btn ghost')] : []),
         btn('설정', () => go('settings'), 'btn ghost'),
       ),
-      el('p', { class: 'muted fine' }, '로그인 없이 바로 즐길 수 있어요. 기록은 이 기기에만 저장돼요.'),
+      // 🔴 "기기에만 저장돼요"를 **무조건** 적으면, 주간 순위를 켠 아이에게는 거짓말이 된다
+      //    (별명과 이번 주 숫자가 서버로 나간다). 동의 상태에 따라 말을 바꾼다.
+      el('p', { class: 'muted fine' }, d.board.consent
+        ? '로그인 없이 바로 즐길 수 있어요. 기록은 이 기기에 저장되고, 주간 순위에는 별명과 이번 주 숫자만 올라가요.'
+        : '로그인 없이 바로 즐길 수 있어요. 기록은 이 기기에만 저장돼요.'),
     ),
   );
   return { node };
@@ -152,8 +156,15 @@ export function prepScreen(go: Go, stageIndex: number): { node: HTMLElement } {
   const owned = ALLIES.filter((u) => d.roster[u.id])
     .sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity) || a.cost - b.cost);
 
-  let picked = (d.deck.length ? d.deck : defaultDeck(ownedIds())).filter((id) => d.roster[id]);
-  if (picked.length === 0) picked = defaultDeck(ownedIds());
+  /**
+   * 🔴 저장된 덱을 **그대로 쓰지 않는다.** 빈 칸은 새로 얻은 셈지기로 채운다 — 안 그러면
+   *    1판에서 3기를 고른 아이가 8판까지 그 3기로 싸운다(실측: 보유 7명인데 덱 3/5).
+   *    규칙과 근거는 `reconcileDeck`(units.ts), 회귀 방지는 tests/summon.spec.ts.
+   *    ⚠️ 이건 "일부러 5칸을 안 썼다"와 "새 셈지기를 못 봤다"를 구분하지 못한다.
+   *       구분하려면 저장에 '일부러 뺐음'을 남겨야 하는데(스키마 변경), 2학년이 칸을
+   *       일부러 비워 둘 가능성보다 못 보고 지나칠 가능성이 훨씬 크다고 보고 채우는 쪽을 택했다.
+   */
+  let picked = reconcileDeck(d.deck, ownedIds());
 
   const grid = el('div', { class: 'card-grid' });
   const startBtn = btn('출전!', () => {
@@ -627,7 +638,11 @@ export function reportScreen(go: Go): { node: HTMLElement } {
                 el('th', {}, '갈래'), el('th', {}, '푼 수'), el('th', {}, '정답률'), el('th', {}, '빠르고 정확'), el('th', {}, '4주 변화'))),
               el('tbody', {}, ...rows)))
         : el('p', { class: 'muted' }, '아직 기록이 없어요.'),
-      el('p', { class: 'muted' }, '이 기록은 이 기기에만 저장돼요. 어디로도 보내지 않아요.'),
+      // 🔴 "어디로도 보내지 않아요"는 주간 순위를 켜면 사실이 아니다 — 이 표의 '푼 수'가
+      //    그대로 순위 점수로 나간다. 켜져 있을 때는 무엇이 나가는지 정확히 적는다.
+      el('p', { class: 'muted' }, d.board.consent
+        ? '이 표는 이 기기에만 저장돼요. 주간 순위에는 별명과 이번 주 숫자(맞힌 문제 수·가장 멀리 간 길)만 올라가요. 설정에서 끌 수 있어요.'
+        : '이 기록은 이 기기에만 저장돼요. 어디로도 보내지 않아요.'),
     ),
   );
   return { node };

@@ -2,7 +2,7 @@ import type { BattleStatus, LiveUnit, StageDef } from './types';
 import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult } from './units';
 import { allyGrowth, enemyBudget, MAP_LEN, MAX_SEC } from './stages';
 import {
-  baseRegen, cannonDamage, CANNON_KNOCKBACK, CANNON_PER_CORRECT, HASTE_DECAY, HASTE_MAX,
+  baseRegen, cannonDamage, CANNON_CASTLE_SHARE, CANNON_KNOCKBACK, CANNON_PER_CORRECT, HASTE_DECAY, HASTE_MAX,
   HASTE_PER_CORRECT, hasteOf, manaCap, newDda, rewardFor, START_MONEY, stepDda,
   type DdaState,
 } from './economy';
@@ -89,6 +89,12 @@ export class Battle {
       if (u.spd > 0) u.x = Math.min(MAP_LEN, u.x + CANNON_KNOCKBACK);
       this.events.push({ type: 'hit', x: u.x, side: -1 });
     }
+    // 🔴 성에도 때린다. 예전엔 **살아 있는 적에게만** 피해를 줬는데, 전선이 적 성 앞까지
+    //    밀고 올라가면 화면에 적이 한 마리도 없는 시간이 길다(실측: 1판 28초 이후 적군 0마리).
+    //    그때 대포를 누르면 충전만 사라지고 아무 일도 안 일어났다 — 아이 눈에는 **고장난 버튼**이다.
+    //    정답 12개로 번 것이 아무것도 아닌 게 되면 "정답의 하류에 쾌감을 둔다"는 원칙이 깨진다.
+    this.castleHp -= this.stage.castleHp * CANNON_CASTLE_SHARE;
+    this.events.push({ type: 'castleHit', x: MAP_LEN, side: 1 });
     return true;
   }
 

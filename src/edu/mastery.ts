@@ -1,5 +1,6 @@
 import type { QType } from './curriculum';
 import { difficultyOf, TYPE_BY_ID } from './curriculum';
+import { DDA_STEP_ELO } from '../sim/economy';
 
 /**
  * 숙련도 추정 — Elo 방식.
@@ -69,7 +70,15 @@ export function initialTheta(type: QType, known: ThetaMap): number {
  * L1(전투 중) = 0.85(유창성) / L2(관문) = 0.60(도전)
  */
 export function pickLevel(type: QType, theta: number, targetP: number, ddaLevel = 0): number {
-  const adjusted = theta + ddaLevel * 70; // DDA 단계당 쉬운 쪽으로
+  /**
+   * 🔴 **부호 주의.** 막힌 아이에게는 θ를 **낮게** 쳐서 더 쉬운 문항을 골라야 한다.
+   *    `theta + ddaLevel * …` 로 두면 정확히 반대가 된다 — 두 번 틀린 아이에게 더 어려운 문제를
+   *    주고, 화면에는 아무 표시도 안 난다(레벨은 프롬프트에 드러나지 않는다).
+   *    실측으로 확인했다: A2·θ1400에서 DDA 0→3단계에 체감 정답률 0.83 → 0.64.
+   *    상수도 **economy.ts 의 것을 그대로 쓴다** — 여기에 70을 또 적어 두었던 게 사고의 원인이다
+   *    (한쪽만 고치면 조용히 어긋난다). 회귀 방지는 tests/learning.spec.ts 의 DDA 방향 테스트.
+   */
+  const adjusted = theta - ddaLevel * DDA_STEP_ELO;
   let best = 1;
   let bestGap = Infinity;
   for (let lv = 1; lv <= 5; lv++) {

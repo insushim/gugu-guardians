@@ -24,19 +24,47 @@ import { join, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const PY = join(process.env.HOME, '.claude/venvs/vibes/bin/python');
+/**
+ * 🔴 인터프리터를 한 대의 로컬 venv 에 못 박아 두면 **그 컴퓨터 밖에서는 게이트가 사라진다.**
+ *    게다가 아래 "없으면 건너뜀"과 만나면 CI 는 아무것도 검사하지 않고 초록불을 켠다 —
+ *    안 도는 것보다 **돈다고 착각하는 쪽이 더 나쁘다**. 찾을 수 있는 파이썬을 쓴다.
+ */
+const LOCAL_PY = join(process.env.HOME ?? '', '.claude/venvs/vibes/bin/python');
+const PY = process.env['GUGU_PY'] || (existsSync(LOCAL_PY) ? LOCAL_PY : 'python3');
 const dirs = process.argv.slice(2).length ? process.argv.slice(2) : ['_raw/units', '_raw/enemies', '_raw/crest'];
 
 const GHOST_MAX = 20;    // 내부 반투명 상한(%) — 정상 스프라이트는 2~5%, 고장난 해태는 69%였다
 const SOLID_MIN = 0.45;  // 불투명 면적이 또래 중앙값의 이 배수 미만이면 본체가 지워진 것
 
-if (!existsSync(PY)) { console.log('! PIL 없음 — 검사 건너뜀'); process.exit(0); }
+/**
+ * 🔴 파이썬·의존성이 없을 때 **조용히 통과시키지 않는다.** 예전엔 exit 0 이라
+ *    "게이트가 돌았다"와 "게이트가 자기를 껐다"가 출력상 구분되지 않았다.
+ *    일부러 건너뛰려면 ASSET_CHECK_OPTIONAL=1 을 명시해야 한다.
+ */
+try {
+  execFileSync(PY, ['-c', 'import numpy, scipy, PIL'], { stdio: 'ignore' });
+} catch {
+  const msg = `✗ 스프라이트 게이트를 돌릴 수 없다 — ${PY} 에 numpy/scipy/pillow 가 없다.`;
+  if (process.env['ASSET_CHECK_OPTIONAL'] === '1') { console.log(`${msg} (ASSET_CHECK_OPTIONAL=1 이라 건너뜀)`); process.exit(0); }
+  console.error(`${msg}\n  설치: pip install numpy scipy pillow   /  다른 파이썬: GUGU_PY=/path/to/python`);
+  process.exit(1);
+}
 
 const files = dirs.flatMap((d) => {
   const abs = isAbsolute(d) ? d : join(ROOT, d);
-  return existsSync(abs) ? readdirSync(abs).filter((f) => f.endsWith('.png')).map((f) => join(abs, f)) : [];
+  return existsSync(abs) ? readdirSync(abs).filter((f) => /\.(png|webp)$/i.test(f)).map((f) => join(abs, f)) : [];
 });
-if (!files.length) { console.log('! 검사할 원본이 없다(_raw 는 배포본에 없다)'); process.exit(0); }
+/**
+ * 🔴 "검사할 파일 0개"도 통과로 세지 않는다 — 단, 기본 대상(_raw)은 커밋되지 않아
+ *    없는 게 정상이므로 거기서만 조용히 넘어간다. **경로를 직접 지정했는데 0개면 실패다**
+ *    (디렉터리 이름이 바뀌거나 빌드가 산출물을 안 냈는데 CI가 초록불이 되는 걸 막는다).
+ */
+if (!files.length) {
+  const explicit = process.argv.slice(2).length > 0;
+  if (!explicit) { console.log('! 검사할 원본이 없다(_raw 는 배포본에 없다)'); process.exit(0); }
+  console.error(`✗ 지정한 경로에 검사할 이미지가 없다: ${dirs.join(', ')}`);
+  process.exit(1);
+}
 
 const rows = JSON.parse(execFileSync(PY, ['-c', `
 import sys, json

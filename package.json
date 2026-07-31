@@ -10,10 +10,11 @@
     "preview": "vite preview --port 5184 --strictPort",
     "test": "vitest run",
     "probe": "node tools/balance-probe.mjs",
-    "check": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json && vitest run && node tools/balance-probe.mjs && node tools/asset-check.mjs",
+    "check": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json && vitest run && node tools/balance-probe.mjs && node tools/asset-check.mjs && node tools/asset-check.mjs public/assets",
     "build:single": "node tools/build-single.mjs",
     "deploy:server": "wrangler deploy --config server/wrangler.jsonc",
-    "check:assets": "node tools/asset-check.mjs"
+    "check:assets": "node tools/asset-check.mjs && node tools/asset-check.mjs public/assets",
+    "qa:launch": "node tools/qa-launch.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260728.1",

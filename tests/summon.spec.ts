@@ -3,7 +3,7 @@ import {
   summonOnce, summonTen, upgradeCost, canUpgrade, upgrade,
   probabilityTable, PITY_LEGEND, type Roster, type SummonState,
 } from '../src/meta/summon';
-import { ALLIES, ALLY_BY_ID, RARITIES, maxLevel, levelMult, rarityRank } from '../src/sim/units';
+import { ALLIES, ALLY_BY_ID, RARITIES, maxLevel, levelMult, rarityRank, reconcileDeck, defaultDeck, progressionAllies, DECK_SIZE } from '../src/sim/units';
 
 /** 결정론 RNG — 뽑기 테스트는 재현 가능해야 한다 */
 function rngOf(seed: number): () => number {
@@ -135,5 +135,47 @@ describe('승급', () => {
     for (let lv = 3; lv <= 15; lv++) {
       expect(upgradeCost(lv)).toBeGreaterThan(upgradeCost(lv - 1));
     }
+  });
+});
+
+describe('덱 보정 — 새로 얻은 셈지기가 전장에 실제로 나간다', () => {
+  /**
+   * 🔴 저장된 덱을 그대로 쓰면 1판에서 3기를 고른 아이가 8판까지 그 3기로 싸운다.
+   *    밸런스 게이트는 이걸 못 본다 — 프로브는 판마다 최선의 5기를 새로 짜기 때문이다.
+   *    (실측: 보유 7명인데 출전 화면이 "3/5" 였다.)
+   */
+  it('빈 칸이 있으면 보유 중인 셈지기로 채운다', () => {
+    const owned = progressionAllies(6).map((u) => u.id);
+    expect(owned.length).toBeGreaterThan(DECK_SIZE);
+    const saved = owned.slice(0, 3);
+    const got = reconcileDeck(saved, owned);
+    expect(got).toHaveLength(DECK_SIZE);
+    for (const id of saved) expect(got, '고른 것을 빼면 안 된다').toContain(id);
+    expect(new Set(got).size, '중복이 있으면 한 칸을 낭비한다').toBe(got.length);
+  });
+
+  it('이미 꽉 찬 덱은 건드리지 않는다', () => {
+    const owned = progressionAllies(9).map((u) => u.id);
+    const saved = owned.slice(0, DECK_SIZE);
+    expect(reconcileDeck(saved, owned)).toEqual(saved);
+  });
+
+  it('지금 없는 유닛은 빼고 그만큼 다시 채운다 (기록 초기화·저장 이월 대비)', () => {
+    const owned = progressionAllies(6).map((u) => u.id);
+    const got = reconcileDeck([...owned.slice(0, 2), 'ghost_unit_없음'], owned);
+    expect(got).not.toContain('ghost_unit_없음');
+    expect(got).toHaveLength(DECK_SIZE);
+    for (const id of got) expect(owned).toContain(id);
+  });
+
+  it('저장된 덱이 비어 있으면 추천 덱을 쓴다', () => {
+    const owned = progressionAllies(6).map((u) => u.id);
+    expect(reconcileDeck([], owned)).toEqual(defaultDeck(owned));
+  });
+
+  it('보유가 5기 미만이면 있는 만큼만 (빈 칸을 억지로 채우지 않는다)', () => {
+    const owned = progressionAllies(1).map((u) => u.id);
+    const got = reconcileDeck(owned.slice(0, 1), owned);
+    expect(got.length).toBe(Math.min(DECK_SIZE, owned.length));
   });
 });

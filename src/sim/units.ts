@@ -104,3 +104,23 @@ export function defaultDeck(ownedIds: readonly string[]): string[] {
   }
   return pick.slice(0, DECK_SIZE).map((u) => u.id);
 }
+
+/**
+ * 저장된 덱을 지금 보유 상태에 맞춰 손본다 — **지금 없는 유닛을 빼고, 남는 칸을 채운다.**
+ *
+ * 🔴 저장된 덱을 그대로 쓰면, 1판에서 3기를 고른 아이가 6판·8판까지 그 3기로 싸운다.
+ *    그 사이 새로 얻은 셈지기는 칸이 비어 있는데도 안 들어간다(실측: 보유 7명·덱 3/5).
+ *    "새 셈지기를 얻었다"는 보상이 전장에 아무 영향도 못 주고, 밸런스 게이트는 이걸 못 본다 —
+ *    프로브는 판마다 `defaultDeck(보유 전부)` 로 최선의 5기를 새로 짜기 때문이다.
+ * 🔴 고른 것을 빼지는 않는다. 채우는 순서는 `defaultDeck` 과 같다(역할 균형이 유지된다).
+ */
+export function reconcileDeck(saved: readonly string[], ownedIds: readonly string[]): string[] {
+  const owned = new Set(ownedIds);
+  const out = saved.filter((id) => owned.has(id)).slice(0, DECK_SIZE);
+  if (out.length === 0) return defaultDeck(ownedIds);
+  for (const id of defaultDeck(ownedIds)) {
+    if (out.length >= DECK_SIZE) break;
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}

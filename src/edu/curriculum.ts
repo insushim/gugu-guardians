@@ -48,11 +48,28 @@ export const TYPES: readonly TypeMeta[] = [
 export const TYPE_BY_ID = new Map(TYPES.map((t) => [t.id, t] as const));
 export const ALL_TYPE_IDS: QType[] = TYPES.map((t) => t.id);
 
-/** 유형×레벨의 Elo 난이도 */
+/** 레벨 사다리의 가운데 칸 — 이 레벨의 난이도가 곧 `baseB` 다 */
+export const LEVEL_MID = 3;
+/** 한 레벨당 Elo 간격 */
+export const LEVEL_STEP = 150;
+
+/**
+ * 유형×레벨의 Elo 난이도.
+ *
+ * 🔴 예전엔 `baseB + (level-1)*60` 이었다 — 사다리가 baseB 에서 **위로만 240** 뻗어 있어서
+ *    가장 쉬운 레벨 1조차 그 단원을 막 배운 아이보다 위였다. 그래서:
+ *      · 목표 정답률 0.85 를 맞추려면 문항이 아이보다 **302 Elo 아래**여야 하는데 갈 데가 없어
+ *        `pickLevel` 이 늘 레벨 1을 골랐다 → **레벨 2~5가 죽은 설정값**이었다.
+ *      · 막 배운 아이의 실측 정답률이 **50%**(설계 목표 85%, 밸런스 가정 60% 둘 다 미달).
+ *      · DDA 도 무의미했다 — 이미 바닥이라 더 내려갈 칸이 없었다.
+ *    이제 baseB 를 **가운데(레벨 3)** 에 두고 ±300 으로 펼친다. 아이가 사다리 한가운데 서므로
+ *    위아래로 모두 조절이 되고, 다섯 칸이 전부 쓰인다.
+ *    ⚠️ `baseB` 의 의미가 바뀌었다: "레벨 1의 난이도"가 아니라 **"그 단원의 표준 난이도"** 다.
+ */
 export function difficultyOf(type: QType, level: number): number {
   const meta = TYPE_BY_ID.get(type);
   if (!meta) return 1200;
-  return meta.baseB + (level - 1) * 60;
+  return meta.baseB + (level - LEVEL_MID) * LEVEL_STEP;
 }
 
 /** 프로필 학년 범위를 넘는 유형인가 (학년 초과 게이트) */

@@ -49,6 +49,23 @@ export class FieldRenderer {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  /**
+   * 쓰러진 자리에 잠깐 남는 먹 자국.
+   * 🔴 `die` 이벤트는 예전엔 **아무도 소비하지 않았다.** 그래서 적이 나타나 0.3초 만에
+   *    사라져도 화면에 아무 표시가 없었고, 아이 눈에는 "적이 아예 안 나온다"로 보였다
+   *    (실사용자 보고 + 실측: 전선이 적 성에 닿은 뒤엔 표본 시점마다 적 0마리).
+   *    쓰러지는 걸 보여 주는 것만으로 "싸우고 있다"가 읽힌다 — 밸런스는 건드리지 않는다.
+   */
+  private puffs: { x: number; side: 1 | -1; at: number }[] = [];
+  private static readonly PUFF_MS = 420;
+
+  puff(x: number, side: 1 | -1): void {
+    if (this.opts.reduceMotion) return;
+    // 화면을 뒤덮지 않게 상한을 둔다(대포 한 방에 수십 마리가 동시에 죽을 수 있다)
+    if (this.puffs.length > 24) this.puffs.shift();
+    this.puffs.push({ x, side, at: performance.now() });
+  }
+
   shake(mag = 4): void {
     if (this.opts.reduceMotion) return;
     this.shakeMag = mag;
@@ -93,7 +110,30 @@ export class FieldRenderer {
     const sorted = [...b.units].sort((p, q) => p.x - q.x);
     for (const u of sorted) this.drawUnit(u, groundY, b.t);
 
+    this.drawPuffs(groundY, now);
     ctx.restore();
+  }
+
+  /** 쓰러진 자리 표시 — 먹이 번지듯 커지며 옅어진다 */
+  private drawPuffs(groundY: number, now: number): void {
+    if (!this.puffs.length) return;
+    const { ctx } = this;
+    for (let i = this.puffs.length - 1; i >= 0; i--) {
+      const p = this.puffs[i]!;
+      const k = (now - p.at) / FieldRenderer.PUFF_MS;
+      if (k >= 1) { this.puffs.splice(i, 1); continue; }
+      const x = this.sx(p.x);
+      const y = groundY - 34 - k * 16;
+      const r = 9 + k * 17;
+      ctx.globalAlpha = (1 - k) * 0.55;
+      ctx.fillStyle = p.side === -1 ? '#2b2320' : '#1b4f8c';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      // 가운데를 비워 '퍽' 하고 터지는 고리로 — 채운 원만 두면 얼룩처럼 보인다
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(x, y, r * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.globalAlpha = 1;
   }
 
   private drawCastle(cx: number, groundY: number, key: string, ratio: number, ally: boolean): void {
@@ -118,9 +158,16 @@ export class FieldRenderer {
     ctx.fillStyle = '#e6ded1'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ally ? '#2e8b6f' : '#d4342f';
     ctx.fillRect(bx, by, bw * Math.max(0, Math.min(1, ratio)), bh);
-    ctx.fillStyle = '#fff';
+    // 🔴 라벨은 배경 그림 **위에 그대로** 얹힌다(막아 주는 판이 없다). 흰 글씨만 쓰면
+    //    구름·하늘처럼 밝은 배경에서 사라진다(실측: 화면 오른쪽 '엉킴 성'이 안 읽혔다).
+    //    바에는 #0008 테두리가 있지만 글자는 바 **밖**(by-6)에 있어 그 보호를 못 받는다.
     ctx.font = '700 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#000c';
+    ctx.lineJoin = 'round';
+    ctx.strokeText(ally ? '우리 성' : '엉킴 성', bx + bw / 2, by - 6);
+    ctx.fillStyle = '#fff';
     ctx.fillText(ally ? '우리 성' : '엉킴 성', bx + bw / 2, by - 6);
   }
 

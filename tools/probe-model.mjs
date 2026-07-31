@@ -55,7 +55,9 @@ const WAVES = [
 ];
 const BOSS_SHARE = 0.5, BOSS_MOB_SHARE = 0.75, PER_WAVE_CAP = 40;
 export const BUDGET_SLOPE = 0.10;
-export const CASTLE_K = 42000;
+export const CASTLE_K = 25000;
+/** 1판 적 **군대** 총 체력 기준값 — src/sim/stages.ts 의 BUDGET_K 와 1:1 */
+export const BUDGET_K = 2340;
 // 판 길이 램프 — src/sim/stages.ts 의 lengthRamp 와 1:1 (tests/parity.spec.ts 가 대조)
 export const LEN_RAMP_END = 12;
 export const LEN_RAMP_MIN = 0.50;
@@ -67,7 +69,7 @@ const ENEMY_HP = Object.fromEntries(ENEMIES.map((e) => [e.id, e.hp]));
 /** 한 판에 나오는 적의 기준 총 체력(배율 적용 전) */
 export function enemyBudget(index) {
   const v = Math.min(Math.max(1, index), VOLUME_CAP_STAGE);
-  return 2340 * (1 + (v - 1) * BUDGET_SLOPE);
+  return BUDGET_K * (1 + (v - 1) * BUDGET_SLOPE);
 }
 
 export const chapterOf = (n) => Math.floor((n - 1) / CHAPTER_LEN) + 1;
@@ -158,9 +160,21 @@ export const CANNON_PER_CORRECT = 0.09, CANNON_KNOCKBACK = 90;
 // 프로브 전용 보수 가정: 아이가 '다 찼다'를 알아채고 누르기까지의 지연(초)
 export const CANNON_REACT_SEC = 6;
 export const cannonDamage = (budget) => budget * 0.05;
+// 🔴 대포는 적 성에도 피해를 준다 — src/sim/economy.ts 의 CANNON_CASTLE_SHARE 와 1:1.
+//    (전선이 적 성까지 밀고 올라가면 화면에 적이 없어 대포가 '고장난 버튼'이 되던 문제)
+export const CANNON_CASTLE_SHARE = 0.03;
 
 // DDA: 연속 오답 2회 → 1단계 하향(체감 정답률 +10%p), 대신 보상 -30%/단계
-export const DDA_STEP_ACC = 0.10, DDA_MAX = 3, DDA_REWARD_PENALTY = 0.30;
+/**
+ * 🔴 DDA_STEP_ACC = **0**. 예전엔 0.10(단계당 정답률 +10%p)이었는데, 그건 실제 게임이
+ *    해 주지 못하는 구제를 모델이 대신 해 주고 있던 것이다 — 게임의 DDA 는 문항 *레벨*을
+ *    낮추는데, 레벨 사다리가 좁아 대부분의 아이가 이미 레벨 1(바닥)이라 더 내려갈 데가 없다.
+ *    즉 모델 속 "막힌 아이"만 최대 +30%p 를 받고 있었다(실측: 실제 보정 0).
+ *    빼고 다시 돌려도 전 게이트 통과한다(일반 판 정답60% 최저 승률 90% → 86%,
+ *    보스 100% → 95%). 밸런스 표가 실제보다 후하게 나오는 쪽이 훨씬 위험하므로 0으로 둔다.
+ *    사다리를 넓혀 DDA 가 실제로 발화하게 되면(=`curriculum.difficultyOf` 손보면) 되돌릴 것.
+ */
+export const DDA_STEP_ACC = 0.0, DDA_MAX = 3, DDA_REWARD_PENALTY = 0.30;
 
 /** 진도로 무료 해금되는 유닛 */
 export function progressionAllies(stage) {
@@ -260,7 +274,10 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
     if (cannon >= 1 && cannonFullAt < 0) cannonFullAt = t;
     if (cannon >= 1 && t - cannonFullAt >= CANNON_REACT_SEC) {
       const live = units.filter((u) => u.side === -1 && u.hp > 0);
-      if (live.length >= 2) {
+      // 🔴 예전엔 '적 2마리 이상일 때만' 쐈다. 이제 대포는 성에도 피해를 주므로 아이는
+      //    **불이 들어오면 그냥 누른다.** 게이트가 봐야 할 것은 그 최대치다 —
+      //    "대포만으로 굴러가서 소환이 무의미해지지 않는가"를 검사하려면 아끼면 안 된다.
+      {
         cannon = 0;
         cannonFullAt = -1;
         const dmg = cannonDamage(enemyBudget(st)) * allyGrowth(st);
@@ -268,6 +285,7 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
           u.hp -= dmg;
           if (u.spd > 0) u.x = Math.min(MAP_LEN, u.x + CANNON_KNOCKBACK);
         }
+        enCastle -= def.castleHp * CANNON_CASTLE_SHARE;
       }
     }
 
