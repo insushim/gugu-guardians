@@ -269,7 +269,7 @@ export class FieldRenderer {
     ctx.fillText(ally ? '우리 성' : '엉킴 성', bx + bw / 2, by - 6);
   }
 
-  private drawUnit(u: { side: 1 | -1; defId: string; x: number; hp: number; maxHp: number; hurtAt: number; swingAt: number; spd: number }, groundY: number, simT: number): void {
+  private drawUnit(u: { side: 1 | -1; defId: string; x: number; hp: number; maxHp: number; hurtAt: number; swingAt: number; spd: number; breaker?: boolean }, groundY: number, simT: number): void {
     const { ctx } = this;
     const def = u.side === 1 ? ALLY_BY_ID.get(u.defId) : ENEMY_BY_ID.get(u.defId);
     const img = getImage(u.defId);
@@ -312,12 +312,34 @@ export class FieldRenderer {
     ctx.save();
     ctx.translate(x, groundY + 4);
     ctx.strokeStyle = '#221d1a'; ctx.lineWidth = 2;
-    ctx.fillStyle = u.side === 1 ? 'rgba(46,139,111,.85)' : 'rgba(212,52,47,.85)';
+    // 🔴 돌파형은 **한눈에 달라 보여야 한다.** 전선을 그냥 지나쳐 성으로 달리는 놈이라,
+    //    구분이 안 되면 아이 눈에는 "왜 갑자기 성이 깎이지"가 된다.
+    //    색만으로 구분하지 않는다(모양도 다르게) — 색각이상 아이도 읽을 수 있어야 한다.
+    ctx.fillStyle = u.side === 1 ? 'rgba(46,139,111,.85)'
+      : u.breaker ? 'rgba(240,168,40,.92)' : 'rgba(212,52,47,.85)';
     ctx.beginPath();
     if (u.side === 1) { ctx.ellipse(0, 0, 15, 6, 0, 0, Math.PI * 2); }
+    else if (u.breaker) {
+      // 앞으로 뻗은 화살표 — '지나쳐 간다'가 모양으로 읽힌다
+      ctx.moveTo(16, 0); ctx.lineTo(-2, 7); ctx.lineTo(-2, 3);
+      ctx.lineTo(-16, 3); ctx.lineTo(-16, -3); ctx.lineTo(-2, -3); ctx.lineTo(-2, -7);
+      ctx.closePath();
+    }
     else { ctx.moveTo(-14, 5); ctx.lineTo(14, 5); ctx.lineTo(0, -7); ctx.closePath(); }
     ctx.fill(); ctx.stroke();
     ctx.restore();
+
+    // 돌파형에게는 머리 위 표시도 하나 더 — 발밑 링은 앞줄이 겹치면 가려진다
+    if (u.breaker) {
+      ctx.save();
+      ctx.translate(x, groundY - h - 8);
+      ctx.fillStyle = 'rgba(240,168,40,.95)';
+      ctx.strokeStyle = '#221d1a'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 6); ctx.lineTo(-7, -5); ctx.lineTo(7, -5); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
 
     // 체력 바 (다친 유닛만 — 화면을 덜 어지럽힌다)
     if (u.hp < u.maxHp) {

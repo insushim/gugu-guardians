@@ -1,3 +1,4 @@
+import { tierTargetP } from '../sim/tier';
 import type { QType } from './curriculum';
 import { difficultyOf, exceedsGrade } from './curriculum';
 import { fromKey, generateFresh, makeRng, type Question, type Rng } from './generator';
@@ -73,7 +74,13 @@ export class QuizSession {
 
   /** 다음 문항. 복습 기한이 지난 항목이 있으면 그것을 우선 출제한다(오답 봉인 해제). */
   next(ddaLevel = 0): Question {
-    const targetP = this.layer === 'L1' ? 0.85 : 0.6;
+    // 🔴 전투 중 목표 정답률은 **적응형 난이도 단계에 묶는다**(0단계 = 0.85 = 종전 그대로).
+    //    고정 0.85 는 문항을 아이보다 302 Elo 아래로만 고르게 만들어, 30판을 돌려도
+    //    레벨 3~5 가 **한 번도** 안 나왔다(실측: Lv1 589 / Lv2 71 / Lv3~5 0).
+    //    ⚠️ 전투와 한 몸이라는 걸 잊지 말 것 — 목표를 낮추면 정답률이 떨어지고,
+    //       정답률이 떨어지면 셈력이 줄어 전투도 같이 어려워진다. 그래서 따로 놀리지 않고
+    //       전투 난이도와 **같은 단계 하나**로 움직인다.
+    const targetP = this.layer === 'L1' ? tierTargetP(this.save.challenge.tier) : 0.6;
 
     // ① SRS 우선 — 단, 이 판의 유형에 속하는 것만(엉뚱한 단원이 튀어나오지 않게)
     // 🔴 **거르고 나서 자른다.** 반대로 하면(먼저 8개로 자르고 유형 필터) 복습 밀린 항목이

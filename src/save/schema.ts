@@ -2,6 +2,7 @@ import type { QType } from '../edu/curriculum';
 import { ALL_TYPE_IDS } from '../edu/curriculum';
 import { ALLIES, ALLY_BY_ID, maxLevel, progressionAllies } from '../sim/units';
 import { PITY_LEGEND } from '../meta/summon';
+import { EASY_STREAK_TO_RAISE, MAX_TIER } from '../sim/tier';
 import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
@@ -12,7 +13,7 @@ import { MANA_CAP_MAX_LV } from '../sim/economy';
 import { UUID_RE, MAX as BOARD_MAX } from '../../shared/board-contract';
 
 export const SAVE_KEY = 'gugu:save';
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 /** 스테이지가 무한이라 상한이 없다 — 다만 손상 세이브가 무한 루프를 만들지 않도록 선은 둔다 */
 export const MAX_STAGE_KEY = 9999;
@@ -33,6 +34,12 @@ export interface SaveData {
   currency: { meokmul: number; recovered: number };
   /** 먹물로 산 영구 강화. 전투 밖에서만 바뀌고 전투는 읽기만 한다 */
   upgrades: { mana: number };
+  /**
+   * 적응형 전투 난이도. 판이 끝날 때마다 결과로 조정된다(src/sim/tier.ts).
+   * 🔴 **0 = 게이트가 검사하는 밸런스 그대로.** 어려워하는 아이는 0을 벗어나지 않으므로
+   *    "정답 60%면 소환 없이 캠페인 통과"(G2) 안전망이 설계상 보장된다.
+   */
+  challenge: { tier: number; streak: number };
   edu: {
     theta: Partial<Record<QType, number>>;
     thetaWeekly: WeeklySnapshot[];
@@ -93,6 +100,7 @@ export function defaultSave(): SaveData {
     codex: { unlocked: [...STARTER_UNITS] },
     currency: { meokmul: 0, recovered: 0 },
     upgrades: { mana: 0 },
+    challenge: { tier: 0, streak: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
     settings: { sound: true, music: true, fontScale: 1, reduceMotion: false },
     board: { device: '', consent: false, week: '', correct: 0, stage: 0, playMs: 0 },
@@ -152,6 +160,7 @@ export function normalize(input: unknown): SaveData {
   const codex = isObj(d['codex']) ? d['codex'] : {};
   const currency = isObj(d['currency']) ? d['currency'] : {};
   const upgrades = isObj(d['upgrades']) ? d['upgrades'] : {};
+  const challenge = isObj(d['challenge']) ? d['challenge'] : {};
   const edu = isObj(d['edu']) ? d['edu'] : {};
   const settings = isObj(d['settings']) ? d['settings'] : {};
   const board = isObj(d['board']) ? d['board'] : {};
@@ -232,6 +241,13 @@ export function normalize(input: unknown): SaveData {
       meokmul: Math.floor(num(currency['meokmul'], 0, 0, 999999)),
       recovered: Math.floor(num(currency['recovered'], 0, 0, 999999)),
     },
+    challenge: {
+      tier: Math.floor(num(challenge['tier'], 0, 0, MAX_TIER)),
+      // 🔴 상한이 EASY_STREAK_TO_RAISE 면 한 칸 넉넉하다 — nextTier 가 만들어 내는
+      //    대기 streak 의 최댓값은 EASY_STREAK_TO_RAISE - 1 이다(그 값에 닿는 순간 승급하고 0 으로 리셋).
+      //    손상된 저장의 streak=2 를 유효 상태로 받아들이면 승리 한 판만으로 승급한다.
+      streak: Math.floor(num(challenge['streak'], 0, 0, EASY_STREAK_TO_RAISE - 1)),
+    },
     upgrades: {
       mana: Math.floor(num(upgrades['mana'], 0, 0, MANA_CAP_MAX_LV)),
     },
@@ -287,6 +303,9 @@ export function normalize(input: unknown): SaveData {
  *    버리는 필드라 별도 처리가 필요 없다 — 화이트리스트가 알아서 떨군다.
  *  - v3 는 `upgrades.mana`(셈력 그릇 단계)를 더한다. **없으면 0** — 기존 저장은
  *    기본 그릇으로 시작하고, 이미 모은 먹물은 그대로라 바로 강화할 수 있다.
+ *  - v4 는 `challenge.tier`(적응형 전투 난이도)를 더한다. **없으면 0** — 이미 하던 아이는
+ *    지금까지와 똑같은 난이도에서 시작해, 여유롭게 두 판 이기면 그때부터 올라간다.
+ *    (기존 저장을 갑자기 어렵게 만들지 않는다.)
  *  - 클리어 기록·먹물·SRS·통계·θ 시계열은 그대로 보존된다.
  *
  * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v3"를 만든다.

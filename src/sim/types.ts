@@ -111,6 +111,13 @@ export interface LiveUnit {
   hurtAt: number;
   /** 렌더 전용: 마지막 공격 시각(스윙) */
   swingAt: number;
+  /**
+   * 돌파형 — 아군 전선과 교전하지 않고 **지나쳐 성으로 직행**한다.
+   * 맞기는 맞으므로 살아서 도달할지는 우리 전선의 화력에 달렸다(맷집이 아니라).
+   */
+  breaker?: boolean;
+  /** 광역 공격 반경(월드 단위). 0/undefined 면 단일 대상 */
+  aoe?: number;
 }
 
 export type BattleStatus = 'playing' | 'win' | 'lose' | 'draw';

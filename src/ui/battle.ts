@@ -1,3 +1,4 @@
+import { nextTier } from '../sim/tier';
 import { Battle } from '../sim/core';
 import { stageDef, stageBackground, MAX_SEC } from '../sim/stages';
 import { ALLY_BY_ID, ALLY_CAP } from '../sim/units';
@@ -33,6 +34,10 @@ export interface BattleResult {
   correct: number;
   seconds: number;
   answerMs: number;
+  /** 이 판을 치른 난이도 단계 */
+  tier: number;
+  /** 다음 판 난이도 — 달라졌으면 결과 화면이 알려 준다 */
+  nextTier: number;
 }
 
 export function buildBattle(stageIndex: number, deck: string[], onDone: (r: BattleResult) => void): { node: HTMLElement; teardown: Teardown } {
@@ -41,7 +46,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   // 승급 레벨을 그대로 넘긴다 — 도감에서 키운 셈지기가 전장에서도 세져야 한다
   const levels: Record<string, number> = {};
   for (const [id, e] of Object.entries(save.roster)) levels[id] = e.level;
-  const battle = new Battle(stage, levels, save.upgrades.mana);
+  const battle = new Battle(stage, levels, save.upgrades.mana, save.challenge.tier);
   const quiz = new QuizSession({ layer: 'L1', types: stage.quizTypes, save, seed: Date.now() % 100000 });
 
   // ── DOM ────────────────────────────────────────────────────────────────
@@ -275,6 +280,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     finished = true;
     cancelAnimationFrame(raf);
     if (battle.status === 'win') play('win');
+    const nx = nextTier(save.challenge.tier, save.challenge.streak, battle.outcome);
     const r: BattleResult = {
       status: battle.status === 'playing' ? 'draw' : battle.status,
       stage: stageIndex,
@@ -282,10 +288,16 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       correct: battle.correct,
       seconds: battle.t,
       answerMs: battle.answerMs,
+      tier: battle.tier,
+      nextTier: nx.tier,
     };
     store.update((d) => {
       d.edu.playMs += playMs;
       d.edu.rounds += 1;
+      // 🔴 다음 판 난이도를 이 판의 결과로 정한다. 올릴 땐 두 판 연속 여유롭게 이겼을 때만,
+      //    내릴 땐 한 판만 져도 바로 — 비대칭이 의도다(막히는 아이를 붙잡아 두지 않는다).
+      d.challenge.tier = nx.tier;
+      d.challenge.streak = nx.streak;
       // 주간 순위 버킷. 동의 여부와 무관하게 로컬에는 쌓는다 —
       // 나중에 켰을 때 "이번 주 기록이 0"이 되면 아이 입장에선 손해다.
       bumpWeeklyNow(d, { correct: battle.correct, playMs, stage: r.status === 'win' ? stageIndex : 0 });
@@ -332,6 +344,8 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     window.__gugu__ = {
       ...(window.__gugu__ ?? {}),
       units: battle.units.length, t: battle.t, status: battle.status,
+      tier: battle.tier,
+      breakers: battle.units.filter((u) => u.side === -1 && u.hp > 0 && u.breaker).length,
       money: battle.money, manaMax: battle.manaMax, haste: battle.haste,
       // 가속은 순간값이라 스냅샷 시점엔 이미 풀려 있을 수 있다 — 최고치를 따로 남긴다
       maxHasteSeen: Math.max(Number(window.__gugu__?.['maxHasteSeen'] ?? 1), battle.haste),

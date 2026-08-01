@@ -362,6 +362,14 @@ export function resultScreen(go: Go, r: ResultPayload): { node: HTMLElement } {
         stat('문제 시간 비율', `${Math.round(density * 100)}%`),
       ),
       ...(gained ? [gained] : []),
+      // 🔴 난이도가 조용히 바뀌면 아이는 "왜 갑자기 어렵지"라고만 느낀다 —
+      //    바뀐 사실과 이유를 말해 준다. 내려갈 때는 실패가 아니라 배려로 읽히게 쓴다.
+      ...(r.nextTier !== r.tier ? [el('div', { class: 'card gain' },
+        el('b', {}, r.nextTier > r.tier ? '⚔️ 엉킴괴수가 더 세졌어요!' : '🛡️ 엉킴괴수가 조금 약해졌어요'),
+        el('div', { class: 'muted' }, r.nextTier > r.tier
+          ? '너무 쉬웠죠? 다음 판은 더 강한 적이 나와요.'
+          : '다음 판은 조금 수월할 거예요. 천천히 해도 괜찮아요.'),
+      )] : []),
       el('p', { class: 'muted' }, won
         ? '문제를 빨리 풀수록 셈지기가 더 빨리 나와요.'
         : '괜찮아요. 다시 도전하면 아까 틀린 문제가 먼저 나와요.'),

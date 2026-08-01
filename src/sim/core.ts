@@ -1,6 +1,7 @@
 import type { BattleStatus, LiveUnit, StageDef } from './types';
 import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult } from './units';
 import { allyGrowth, enemyBudget, MAP_LEN, MAX_SEC } from './stages';
+import { clampTier, tierAoe, tierAtk, tierBreakShare, type MatchOutcome } from './tier';
 import {
   baseRegen, cannonDamage, CANNON_CASTLE_SHARE, CANNON_KNOCKBACK, CANNON_PER_CORRECT, HASTE_DECAY, HASTE_MAX,
   HASTE_PER_CORRECT, hasteOf, manaCap, newDda, rewardFor, START_MONEY, stepDda,
@@ -47,15 +48,36 @@ export class Battle {
   /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
   private levels: Readonly<Record<string, number>>;
 
-  constructor(stage: StageDef, levels: Readonly<Record<string, number>> = {}, manaLevel = 0) {
+  /**
+   * 적응형 전투 난이도 단계(0~MAX_TIER). **0 = 오늘의 밸런스와 정확히 동일** —
+   * 그래야 못하는 아이(0단계를 못 벗어난다)에게 G2 안전망이 설계상 보장된다.
+   */
+  readonly tier: number;
+
+  constructor(
+    stage: StageDef,
+    levels: Readonly<Record<string, number>> = {},
+    manaLevel = 0,
+    tier = 0,
+  ) {
     this.stage = stage;
     this.levels = levels;
+    this.tier = clampTier(tier);   // 🔴 자체 클램프 금지 — NaN 이 새어 들어간다(clampTier 주석 참고)
     this.growth = allyGrowth(stage.index);
     this.castleHp = stage.castleHp;
     this.playerCastleHp = stage.playerCastleHp;
     this.manaMax = manaCap(manaLevel);
     this.money = Math.min(START_MONEY, this.manaMax);
     for (const s of stage.spawns) this.spawnNext.set(s.id, s.t0);
+  }
+
+  /** 이 판의 결과 — 다음 판 난이도를 정하는 입력 */
+  get outcome(): MatchOutcome {
+    return {
+      win: this.status === 'win',
+      castleLeft: Math.max(0, this.playerCastleHp / this.stage.playerCastleHp),
+      accuracy: this.solved > 0 ? this.correct / this.solved : 0,
+    };
   }
 
   /** 지금 아군에게 걸린 가속 배율(1.0~HASTE_MAX) */
@@ -192,6 +214,10 @@ export class Battle {
         if (e) {
           // 수문장은 구역별 기본 체력 차이를 예산에 맞춰 보정한다(stages.ts 의 hpMul)
           const m = this.stage.mult * (s.hpMul ?? 1);
+          // 🔴 난이도 단계 적용. **0단계에서는 아래 셋 다 무효**여야 한다
+          //    (배율 1.0 · 돌파 0 · 광역 0) — 그게 G2 안전망의 근거다.
+          //    돌파형은 **고정형(수문장)과 보스에는 걸지 않는다** — 자리를 지키는 게 그 유닛의 역할이다.
+          const breaker = e.spd > 0 && this.breakerRoll(n);
           this.units.push({
             uid: this.uidSeq++,
             side: -1,
@@ -200,13 +226,17 @@ export class Battle {
             x: e.spd === 0 ? MAP_LEN - 80 : MAP_LEN,
             hp: e.hp * m,
             maxHp: e.hp * m,
-            atk: e.atk * this.stage.mult,
+            atk: e.atk * this.stage.mult * tierAtk(this.tier),
             aspd: e.aspd,
             range: e.range,
-            spd: e.spd,
+            // 돌파형은 싸우지 않고 달린다 — 조금 빨라야 "지나간다"가 읽힌다
+            spd: breaker ? e.spd * 1.25 : e.spd,
             atkAt: 0,
             hurtAt: -99,
             swingAt: -99,
+            ...(breaker ? { breaker: true } : {}),
+            // 광역은 느리고 단단한 적·수문장에게만 준다(빠른 잡몹까지 광역이면 전선이 즉사한다)
+            ...(tierAoe(this.tier) > 0 && e.spd <= 24 ? { aoe: tierAoe(this.tier) } : {}),
           });
           this.spawnCount.set(s.id, n + 1);
           // 🔴 적이 **나왔다는 사실 자체**를 렌더러에 알린다. 전선이 적 성에 닿은 뒤로는
@@ -219,6 +249,17 @@ export class Battle {
       }
       this.spawnNext.set(s.id, this.t + s.every);
     }
+  }
+
+  /**
+   * 이번에 나오는 적이 돌파형인가. **난수를 쓰지 않는다** — 시뮬은 결정론이어야
+   * 프로브·parity 테스트가 성립한다. 대신 스폰 순번으로 균등하게 흩뿌린다(Bresenham).
+   * 예) 비율 0.25 → 4마리 중 1마리가 돌파형이고, 몰려 나오지 않는다.
+   */
+  private breakerRoll(n: number): boolean {
+    const share = tierBreakShare(this.tier);
+    if (share <= 0) return false;
+    return Math.floor((n + 1) * share) > Math.floor(n * share);
   }
 
   private combat(dt: number): void {
@@ -236,10 +277,16 @@ export class Battle {
       const hs = u.side === 1 ? haste : 1;
       let target: LiveUnit | null = null;
       let best = Infinity;
-      for (const v of this.units) {
-        if (v.side === u.side || v.hp <= 0) continue;
-        const d = Math.abs(v.x - u.x);
-        if (d <= u.range && d < best) { best = d; target = v; }
+      // 🔴 돌파형은 **대상을 잡지 않는다.** 전선과 싸우지 않고 지나쳐 성으로 간다.
+      //    (맞기는 맞는다 — 아군은 지나가는 돌파형을 정상적으로 노린다.)
+      //    이게 "아군을 많이 쌓으면 무조건 이긴다"를 깨는 유일한 장치다:
+      //    적 체력·물량을 올리는 건 우리 상비군 16기가 길목을 막고 있어 전혀 듣지 않았다(실측).
+      if (!u.breaker) {
+        for (const v of this.units) {
+          if (v.side === u.side || v.hp <= 0) continue;
+          const d = Math.abs(v.x - u.x);
+          if (d <= u.range && d < best) { best = d; target = v; }
+        }
       }
 
       const castleDist = u.side === 1 ? Math.abs(MAP_LEN - u.x) : Math.abs(u.x - 0);
@@ -256,18 +303,39 @@ export class Battle {
 
       if (target) {
         if (this.t >= u.atkAt) {
-          target.hp -= u.atk;
-          target.hurtAt = this.t;
+          this.strike(u, target);
           u.atkAt = this.t + u.aspd / hs;
           u.swingAt = this.t;
-          this.events.push({ type: 'hit', x: target.x, side: target.side });
         }
       } else if (u.spd > 0) {
         u.x += u.side * u.spd * hs * dt;
-        if (u.side === -1) u.x = Math.max(enemyFloor, u.x);
+        // 돌파형에게는 전진 상한을 걸지 않는다 — 지나가는 것이 그 유닛의 존재 이유다
+        if (u.side === -1 && !u.breaker) u.x = Math.max(enemyFloor, u.x);
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
     }
+  }
+
+  /**
+   * 한 대 때린다. 광역이면 대상 주변까지 함께 맞는다.
+   * 🔴 광역은 "뭉쳐 있을수록 손해"를 만든다 — 아군 16기가 한 점에 쌓여 있는 것이
+   *    지금 게임에서 아무 대가 없는 지배 전략이라 판이 밋밋해졌다.
+   */
+  private strike(u: LiveUnit, target: LiveUnit): void {
+    const r = u.aoe ?? 0;
+    if (r <= 0) {
+      target.hp -= u.atk;
+      target.hurtAt = this.t;
+      this.events.push({ type: 'hit', x: target.x, side: target.side });
+      return;
+    }
+    for (const v of this.units) {
+      if (v.side === u.side || v.hp <= 0) continue;
+      if (Math.abs(v.x - target.x) > r) continue;
+      v.hp -= u.atk;
+      v.hurtAt = this.t;
+    }
+    this.events.push({ type: 'hit', x: target.x, side: target.side });
   }
 
   private cleanup(): void {

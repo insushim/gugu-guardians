@@ -55,9 +55,52 @@ const WAVES = [
 ];
 const BOSS_SHARE = 0.5, BOSS_MOB_SHARE = 0.75, PER_WAVE_CAP = 40;
 export const BUDGET_SLOPE = 0.10;
-export const CASTLE_K = 25000;
+
+/**
+ * 🔴 **스윕 전용 배율.** 상수를 손으로 고쳐 가며 재면 되돌리는 걸 잊는다 —
+ *    그러면 게이트가 다른 숫자로 통과해 버린다. 대신 환경변수로만 흔들고,
+ *    흔들렸을 때는 **표준 출력에 크게 찍어** 그 실행 결과를 게이트 통과로 착각하지 않게 한다.
+ *    (설정되지 않으면 1.0 = 아무 영향 없음. CI 는 이 변수를 쓰지 않는다.)
+ */
+const SWEEP_BUDGET = Number(process.env['GUGU_SWEEP_BUDGET'] ?? 1);
+const SWEEP_CASTLE = Number(process.env['GUGU_SWEEP_CASTLE'] ?? 1);
+const SWEEP_EVERY = Number(process.env['GUGU_SWEEP_EVERY'] ?? 1);   // 스폰 간격 배율(작을수록 몰려온다)
+export const SWEEP_ATK = Number(process.env['GUGU_SWEEP_ATK'] ?? 1);   // 적 공격력 배율
+export const SWEEPING = SWEEP_BUDGET !== 1 || SWEEP_CASTLE !== 1 || SWEEP_EVERY !== 1 || SWEEP_ATK !== 1;
+if (SWEEPING) {
+  console.log(`\n⚠️  스윕 모드 — 적 예산 ×${SWEEP_BUDGET} · 성 체력 ×${SWEEP_CASTLE} · 스폰간격 ×${SWEEP_EVERY} · 적공격 ×${SWEEP_ATK}. 이 실행은 게이트가 아니다.\n`);
+}
+
+export const CASTLE_K = 25000 * SWEEP_CASTLE;
 /** 1판 적 **군대** 총 체력 기준값 — src/sim/stages.ts 의 BUDGET_K 와 1:1 */
-export const BUDGET_K = 2340;
+export const BUDGET_K = 2340 * SWEEP_BUDGET;
+/**
+ * 적응형 전투 난이도 — src/sim/tier.ts 와 **1:1**. (tests/parity.spec.ts 가 값을 대조한다)
+ * 🔴 0단계는 종전 밸런스와 완전히 같아야 한다: 배율 1.0 · 돌파 0 · 광역 0 · 목표정답률 0.85.
+ */
+export const MAX_TIER = 8;
+export const TIER_ATK = [1.0, 1.7, 2.6, 3.6, 4.8, 6.2, 7.8, 9.6, 11.6];
+export const TIER_BREAK = [0, 0.15, 0.25, 0.34, 0.42, 0.50, 0.58, 0.64, 0.70];
+export const TIER_AOE = [0, 0, 70, 85, 100, 115, 130, 145, 160];
+export const TIER_TARGET_P = [0.85, 0.84, 0.82, 0.81, 0.79, 0.78, 0.77, 0.77, 0.77];
+const tclamp = (t) => Math.max(0, Math.min(MAX_TIER, Math.floor(Number.isFinite(t) ? t : 0)));
+
+/**
+ * 단계 승강 규칙 — src/sim/tier.ts 의 nextTier 와 1:1.
+ * 🔴 프로브 쪽 사본은 **여기 하나뿐이어야 한다.** 예전엔 balance-probe.mjs 와
+ *    adaptive-probe.mjs 가 각자 복사본을 들고 있었다. 표 값만 대조하는 parity
+ *    테스트로는 규칙이 갈라져도 안 잡혀서, 게이트가 구버전 규칙으로 조용히
+ *    초록불을 낼 수 있었다. tests/tier.spec.ts 가 이 함수의 **출력**을 대조한다.
+ */
+export const EASY_STREAK_TO_RAISE = 2;
+export function nextTier(tier, streak, m) {
+  const t = tclamp(tier);
+  if (!m.win) return { tier: tclamp(t - 1), streak: 0 };
+  if (!(m.castleLeft >= 0.85 && m.accuracy >= 0.7)) return { tier: t, streak: 0 };
+  const s = streak + 1;
+  return s >= EASY_STREAK_TO_RAISE ? { tier: tclamp(t + 1), streak: 0 } : { tier: t, streak: s };
+}
+
 // 판 길이 램프 — src/sim/stages.ts 의 lengthRamp 와 1:1 (tests/parity.spec.ts 가 대조)
 export const LEN_RAMP_END = 12;
 export const LEN_RAMP_MIN = 0.50;
@@ -109,7 +152,7 @@ export function stageDef(index) {
     spawns.push({
       id,
       t0,
-      every: Math.max(everyMin, everyBase - (v * (everyBase - everyMin)) / VOLUME_CAP_STAGE),
+      every: Math.max(everyMin, everyBase - (v * (everyBase - everyMin)) / VOLUME_CAP_STAGE) * SWEEP_EVERY,
       cap: Math.max(1, Math.min(PER_WAVE_CAP, Math.round((mobBudget * (share / shareSum)) / hp))),
     });
   }
@@ -209,7 +252,17 @@ export function buildDeck(owned) {
  * 한 판 시뮬레이션.
  * @param roster {Record<string, number>} 보유 유닛 id → 레벨. 생략하면 진도 해금분만 레벨1.
  */
-export function simulate(st, accuracy, seed = 1, roster = null) {
+export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
+  const T = tclamp(tier);
+  /**
+   * 🔴 목표 정답률을 낮추면 **같은 아이의 실제 정답률이 내려간다.** 문항이 더 어려워지니까.
+   *    프로브의 `accuracy` 는 '실현 정답률'이라, 단계가 오르면 그만큼 깎아 넣어야
+   *    "문항이 어려워져서 셈력이 줄고 전투도 같이 힘들어진다"는 결합이 모델에 반영된다.
+   *    이걸 빼먹으면 게이트가 실제보다 후해진다.
+   */
+  //    실측 대응표(30판 종단): 목표 0.85→체감 84% · 0.80→77% · 0.72→62%.
+  //    목표 1 만큼 낮추면 체감은 약 1.45 만큼 떨어진다 — 그 기울기를 그대로 쓴다.
+  const accEff = Math.max(0, accuracy - 1.45 * (TIER_TARGET_P[0] - TIER_TARGET_P[T]));
   // 🔴 공통난수: 시드를 정확도와 무관하게 고정해야 정답률 간 비교가 짝지어진 비교가 된다.
   const rng = makeRng(RNG_SEED + seed * 7919 + st * 1000);
   const def = stageDef(st);
@@ -245,7 +298,7 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
     // 1) 학습(문제) — 자원 공급의 주 경로
     if (t >= nextQuizAt) {
       solved++;
-      const effAcc = Math.min(0.99, accuracy + ddaLevel * DDA_STEP_ACC);
+      const effAcc = Math.min(0.99, accEff + ddaLevel * DDA_STEP_ACC);
       if (rng() < effAcc) {
         correct++;
         money = Math.min(cap, money + rewardBase(st) * comboMul(combo) * (1 - ddaLevel * DDA_REWARD_PENALTY));
@@ -254,12 +307,12 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
         combo++;
         wrongStreak = 0; rightStreak++;
         if (rightStreak >= 3 && ddaLevel > 0) { ddaLevel--; rightStreak = 0; }
-        nextQuizAt = t + tOk(accuracy);
+        nextQuizAt = t + tOk(accEff);
       } else {
         combo = 0;
         rightStreak = 0; wrongStreak++;
         if (wrongStreak >= 2 && ddaLevel < DDA_MAX) { ddaLevel++; wrongStreak = 0; }
-        nextQuizAt = t + tBad(accuracy);
+        nextQuizAt = t + tBad(accEff);
       }
     }
     // 2) 자동 수급(학습을 전혀 안 해도 진행은 되게 하는 바닥선)
@@ -315,9 +368,18 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
         const n = spawnedCount[s.id] ?? 0;
         if (n < s.cap) {
           const e = ENEMIES.find((x) => x.id === s.id);
+          // 돌파형 판정은 난수가 아니라 스폰 순번으로 균등 배분(src/sim/core.ts breakerRoll 과 동일)
+          const share = TIER_BREAK[T];
+          const breaker = e.spd > 0 && share > 0 &&
+            Math.floor((n + 1) * share) > Math.floor(n * share);
           units.push({
             side: -1, id: e.id, x: e.spd === 0 ? MAP_LEN - 80 : MAP_LEN,
-            hp: e.hp * def.mult * (s.hpMul ?? 1), atk: e.atk * def.mult, aspd: e.aspd, range: e.range, spd: e.spd, atkAt: 0,
+            hp: e.hp * def.mult * (s.hpMul ?? 1),
+            atk: e.atk * def.mult * SWEEP_ATK * TIER_ATK[T],
+            aspd: e.aspd, range: e.range,
+            spd: breaker ? e.spd * 1.25 : e.spd,
+            atkAt: 0, breaker,
+            aoe: TIER_AOE[T] > 0 && e.spd <= 24 ? TIER_AOE[T] : 0,
           });
           spawnedCount[s.id] = n + 1;
         }
@@ -326,15 +388,24 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
     }
 
     // 5) 전투 / 이동 — 신바람은 아군에게만 걸린다(src/sim/core.ts 와 동일)
+    // 🔴 전선 하한(enemyFloor). 이게 빠져 있으면 프로브의 **일반 적이 아군 전선을 통과**해
+    //    실제 게임과 다르게 움직인다 — 즉 돌파형의 고유 능력이 프로브에선 전원에게 있는 셈이라
+    //    G8 재미 게이트 수치가 게임 거동과 어긋난다. (표 값 parity 테스트로는 안 잡히는 행위 격차)
+    let allyFront = -Infinity;
+    for (const u of units) if (u.side === 1 && u.hp > 0) allyFront = Math.max(allyFront, u.x);
+    const enemyFloor = allyFront === -Infinity ? 0 : Math.max(0, allyFront - 60);
+
     const haste = hasteOf(hasteBoost);
     for (const u of units) {
       if (u.hp <= 0) continue;
       const hs = u.side === 1 ? haste : 1;
       let target = null, best = Infinity;
-      for (const v of units) {
-        if (v.side === u.side || v.hp <= 0) continue;
-        const d = Math.abs(v.x - u.x);
-        if (d <= u.range && d < best) { best = d; target = v; }
+      if (!u.breaker) {
+        for (const v of units) {
+          if (v.side === u.side || v.hp <= 0) continue;
+          const d = Math.abs(v.x - u.x);
+          if (d <= u.range && d < best) { best = d; target = v; }
+        }
       }
       const castleDist = u.side === 1 ? Math.abs(MAP_LEN - u.x) : Math.abs(u.x - 0);
       if (!target && castleDist <= u.range) {
@@ -345,9 +416,19 @@ export function simulate(st, accuracy, seed = 1, roster = null) {
         continue;
       }
       if (target) {
-        if (t >= u.atkAt) { target.hp -= u.atk; u.atkAt = t + u.aspd / hs; }
-      } else {
+        if (t >= u.atkAt) {
+          if (u.aoe > 0) {
+            for (const v of units) {
+              if (v.side === u.side || v.hp <= 0) continue;
+              if (Math.abs(v.x - target.x) <= u.aoe) v.hp -= u.atk;
+            }
+          } else target.hp -= u.atk;
+          u.atkAt = t + u.aspd / hs;
+        }
+      } else if (u.spd > 0) {
         u.x += u.side * u.spd * hs * DT;
+        // 돌파형에게는 전진 상한을 걸지 않는다 — 지나가는 것이 그 유닛의 존재 이유다
+        if (u.side === -1 && !u.breaker) u.x = Math.max(enemyFloor, u.x);
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
     }

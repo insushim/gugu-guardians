@@ -25,10 +25,13 @@ interface RunOpts {
   perStage: number;
   /** 날짜를 판마다 하루씩 넘길지 (SRS 복습이 실제로 도는지 보려면 필요) */
   advanceDays: boolean;
+  /** 적응형 전투 난이도 단계 — 문항 목표 정답률이 여기 묶여 있다 */
+  tier?: number;
 }
 
 function run(opts: RunOpts) {
   const save = defaultSave();
+  save.challenge.tier = opts.tier ?? 0;
   let day = today();
   let rngState = 12345;
   const rand = () => {
@@ -204,5 +207,52 @@ describe('DDA — 연속 오답 시 문항이 쉬워져야 한다', () => {
       }
     }
     console.log('  ' + rows.join('\n  '));
+  });
+});
+
+/**
+ * 난이도 단계가 오르면 **문항도 실제로 어려워지는가.**
+ *
+ * 🔴 사용자 보고 "너무 쉬워서 노잼"에는 전투만이 아니라 문항도 들어 있었다.
+ *    실측: 30판을 돌려도 레벨 3~5 가 **한 번도** 안 나왔다(Lv1 589 / Lv2 71 / Lv3~5 0).
+ *    목표 정답률 0.85 고정이 원인이다 — 그 목표를 맞추려면 문항이 아이보다 302 Elo 아래여야 해서
+ *    사다리의 위쪽 절반이 구조적으로 안 쓰인다. 이제 목표는 난이도 단계에 묶여 있다.
+ */
+describe('난이도 단계가 오르면 문항도 어려워진다', () => {
+  const ability = (t: QType) => difficultyOf(t, LEVEL_MID);
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
+
+  it('높은 단계는 같은 아이에게 더 어려운 문항을 낸다', () => {
+    const lo = run({ ability, stages: 30, perStage: 22, advanceDays: true, tier: 0 });
+    const hi = run({ ability, stages: 30, perStage: 22, advanceDays: true, tier: 6 });
+    const bLo = mean(lo.log.map((r) => r.b));
+    const bHi = mean(hi.log.map((r) => r.b));
+    const lvLo = mean(lo.log.map((r) => r.level));
+    const lvHi = mean(hi.log.map((r) => r.level));
+    const accLo = lo.log.filter((r) => r.correct).length / lo.log.length;
+    const accHi = hi.log.filter((r) => r.correct).length / hi.log.length;
+    // eslint-disable-next-line no-console
+    console.log(`  0단계: 문항난이도 ${bLo.toFixed(0)} · 평균레벨 ${lvLo.toFixed(2)} · 체감 정답률 ${(accLo * 100).toFixed(0)}%`);
+    // eslint-disable-next-line no-console
+    console.log(`  6단계: 문항난이도 ${bHi.toFixed(0)} · 평균레벨 ${lvHi.toFixed(2)} · 체감 정답률 ${(accHi * 100).toFixed(0)}%`);
+
+    expect(bHi).toBeGreaterThan(bLo);
+    expect(lvHi).toBeGreaterThan(lvLo);
+    // 어려워지되, 저학년이 좌절할 만큼 떨어지면 안 된다
+    // 저학년 좌절선 — 열 문제 중 셋 넘게 틀리기 시작하면 도전이 아니라 벌이다
+    expect(accHi).toBeGreaterThan(0.68);
+    expect(accHi).toBeLessThan(accLo);
+  });
+
+  it('사다리 위쪽(레벨 3 이상)이 실제로 쓰인다 — 그 단원을 확실히 넘어선 아이에게', () => {
+    // 단원 기준보다 300점 앞선 아이 = 그 단원을 이미 소화한 아이
+    const strong = run({
+      ability: (t) => difficultyOf(t, LEVEL_MID) + 300,
+      stages: 30, perStage: 22, advanceDays: true, tier: 6,
+    });
+    const high = strong.log.filter((r) => r.level >= 3).length;
+    // eslint-disable-next-line no-console
+    console.log(`  앞선 아이·6단계: 레벨3+ 문항 ${high}개 / ${strong.log.length}개 (${Math.round((high / strong.log.length) * 100)}%)`);
+    expect(high).toBeGreaterThan(0);
   });
 });

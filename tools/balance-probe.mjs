@@ -12,8 +12,11 @@
  * 실행: node tools/balance-probe.mjs
  */
 import {
-  simulate, stageDef, ALLIES, CAMPAIGN_STAGES, progressionAllies, ROSTER,
+  simulate, stageDef, ALLIES, CAMPAIGN_STAGES, progressionAllies, ROSTER, MAX_TIER, SWEEPING, nextTier,
 } from './probe-model.mjs';
+
+/** G8(재미 게이트)이 검사하는 최고 난이도 단계 */
+const probeTier = MAX_TIER;
 
 /**
  * 🔴 시드 7개면 승률이 1/7 = 14%p 단위로만 튄다 — 71%와 86%가 **표본 하나 차이**다.
@@ -111,6 +114,64 @@ for (const st of BOSSES) {
   if (grid[st][0.6].winRate < WIN) fails.push(`G7 보스 ST${st}: 정답60% 승률 ${Math.round(grid[st][0.6].winRate * 100)}%`);
 }
 
+/**
+ * G8 — **재미 게이트.** 승률만 보면 통과인데 아이가 "노잼"이라고 한 이유가 여기 있었다:
+ *   실측(2026-08-01) 잘하는 아이 378판 중 **진 판 0 · 우리 성이 맞은 판 0**.
+ *   이기고 지는 게 아니라 구경이었다. 승률 게이트는 이걸 못 잡는다 — 그래서 따로 잰다.
+ *
+ * 두 방향을 동시에 지킨다:
+ *   (a) 0단계에서 못하는 아이가 막히지 않는다(= 위 G2, 안전망)
+ *   (b) 높은 단계에서 잘하는 아이가 **실제로 위협받는다**(= 여기)
+ * 적응 루프가 아이를 자기 단계로 데려가므로, 둘 다 성립해야 모든 아이에게 게임이 성립한다.
+ */
+{
+  /**
+   * 🔴 **단계 하나만 떼어 재면 틀린 걸 잰다.** 처음엔 "최고 단계가 정답80% 아이에게
+   *    가혹하지 않은가"를 봤는데, 최고 단계는 **아무도 머물지 않는 천장**이다
+   *    (실측: 그 조건 패배율 83% → '벽'으로 FAIL. 하지만 그 아이는 거기 머물지 않는다).
+   *    재야 할 것은 **적응 루프가 아이를 어디에 데려다 놓는가**다 — 그게 아이가 겪는 게임이다.
+   *    그래서 30판을 이어서 돌리고, 그동안 아이가 실제로 겪은 것을 센다.
+   */
+  // 승강 규칙은 probe-model.mjs 의 nextTier 하나만 쓴다(사본 금지 — 게이트가 구버전 규칙으로 돌면
+  // 안전망을 검증한다는 이 게이트의 의미 자체가 사라진다)
+  const play = (skill) => {
+    let lost = 0, touched = 0, n = 0, tierSum = 0;
+    for (const seed of SEEDS) {
+      let tier = 0, streak = 0;
+      for (let st = 1; st <= CAMPAIGN_STAGES; st++) {
+        const r = simulate(st, skill, seed * 31 + st, null, tier);
+        tierSum += tier; n++;
+        if (!r.win) lost++;
+        if (r.myCastleLeft < 0.999) touched++;
+        ({ tier, streak } = nextTier(tier, streak, {
+          win: r.win, castleLeft: r.myCastleLeft,
+          accuracy: r.solved > 0 ? r.correct / r.solved : 0,
+        }));
+      }
+    }
+    return { lost: lost / n, touched: touched / n, tier: tierSum / n };
+  };
+
+  console.log('\n=== G8 재미 게이트 (적응 루프 30판 연속) ===');
+  console.log('아이 실력\t머문 단계\t패배율\t성 피격률');
+  const rows = [0.4, 0.6, 0.75, 0.85, 0.95].map((s) => ({ s, ...play(s) }));
+  for (const r of rows) {
+    console.log(`정답 ${Math.round(r.s * 100)}%\t${r.tier.toFixed(1)}단계\t\t${Math.round(r.lost * 100)}%\t${Math.round(r.touched * 100)}%`);
+  }
+
+  // (a) 안전망 — 어려워하는 아이는 0단계 근처에 머물러야 한다(= 게이트가 검사한 밸런스)
+  for (const r of rows.filter((x) => x.s <= 0.6)) {
+    if (r.tier > 0.5) fails.push(`G8-a 정답${Math.round(r.s * 100)}% 아이가 ${r.tier.toFixed(1)}단계까지 올라감 — 안전망 이탈`);
+  }
+  // (b) 긴장 — 잘하는 아이도 성이 깎이고 가끔 져야 한다
+  for (const r of rows.filter((x) => x.s >= 0.75)) {
+    const p = Math.round(r.s * 100);
+    if (r.touched < 0.1) fails.push(`G8-b 정답${p}% 아이의 성 피격률 ${Math.round(r.touched * 100)}% (<10%) — 긴장 없음`);
+    if (r.lost < 0.03) fails.push(`G8-b 정답${p}% 아이 패배율 ${Math.round(r.lost * 100)}% (<3%) — 질 수 없는 게임`);
+    if (r.lost > 0.4) fails.push(`G8-c 정답${p}% 아이 패배율 ${Math.round(r.lost * 100)}% (>40%) — 벽`);
+  }
+}
+
 // G6 = 통과/실패 게이트가 아니라 **설계 제약 판정**(반사실 실험).
 // "찍기가 통과하면 실패"로 두면 G2(하드월 없음)와 정면 충돌한다 — 실력과 무관한 모든 구제책은
 // 찍기도 똑같이 구제하기 때문이다. 이 열의 목적은 "4지선다를 주입력으로 쓸 수 있는가"에 답하는 것.
@@ -152,6 +213,15 @@ console.log('  ↑ 정답률 85% 고정. 오른쪽으로 갈수록 어렵고, �
 console.log(`  도달 한계(승률 50% 이상): ${Object.entries(reach).map(([k, v]) => `${k} ST${v || '<31'}`).join(' · ')}`);
 if (reach['전설 확보·승급'] <= reach['캠페인만(소환 0)']) {
   fails.push('소환 무의미: 전설 로스터가 캠페인 로스터보다 더 멀리 가지 못한다');
+}
+
+// 🔴 스윕 노브(GUGU_SWEEP_*)가 켜져 있으면 **통과를 선언하지 않는다.**
+//    이 게이트가 증명하는 건 "0단계 = 종전 밸런스"인데, 노브가 상수를 바꾼 상태의
+//    통과는 그 증명이 아니다. 경고만 찍고 exit 0 을 내면 CI 에서 오염된 실행이
+//    조용히 초록불이 된다(실측: `GUGU_SWEEP_ATK=1.01` 로 "✅ 전 게이트 통과" + exit 0).
+if (SWEEPING) {
+  console.log('\n⚠️  스윕 모드로 실행됨 — 이건 게이트 결과가 아니다(탐색용). 노브를 끄고 다시 돌려라.\n');
+  process.exit(2);
 }
 
 if (fails.length === 0) console.log('\n✅ 전 게이트 통과\n');
