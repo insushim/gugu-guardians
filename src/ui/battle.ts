@@ -315,7 +315,12 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     if (battle.events.length) {
       // 🔴 'die' 는 예전에 **아무도 안 읽었다** — 적이 나타나 0.3초 만에 사라져도 화면에
       //    아무 표시가 없어 "적이 안 나온다"로 보였다. 쓰러진 자리를 잠깐 남긴다.
-      for (const e of battle.events) if (e.type === 'die') renderer.puff(e.x, e.side);
+      for (const e of battle.events) {
+        if (e.type === 'die') renderer.puff(e.x, e.side);
+        // 'spawn' 도 같은 이유로 읽는다 — 나오는 순간과 쓰러지는 순간이 짝이어야
+        // "성문에서 나왔다가 맞고 쓰러졌다"가 한 장면으로 읽힌다.
+        else if (e.type === 'spawn') renderer.gate();
+      }
       if (battle.events.some((e) => e.type === 'castleHit')) { renderer.shake(4); play('hit'); }
       else if (battle.events.some((e) => e.type === 'hit')) play('hit');
       battle.events.length = 0;

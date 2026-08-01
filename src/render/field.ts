@@ -21,6 +21,46 @@ export interface RenderOpts {
 const SPRITE_H = 96;      // 기준 스프라이트 높이(px) — 스케일 확정표
 const GROUND_RATIO = 0.86; // 캔버스 높이 중 지면 위치
 
+/**
+ * 성 스프라이트 크기.
+ * 🔴 예전엔 높이만 보고 정했다(`min(160, h*0.5)*0.9`). 좁고 높은 화면(휴대폰 세로)에서
+ *    성 하나가 가로폭의 37%를 먹었다 — 가로도 같이 본다.
+ */
+export function castleSize(w: number, h: number): { w: number; h: number } {
+  const ch = Math.min(160, h * 0.5, w * 0.18);
+  return { w: ch * 0.9, h: ch };
+}
+
+/**
+ * 전장 좌우 여백. 성은 **전장 밖**에 그리므로(`drawCastle` 참고) 성 한 칸이 통째로 들어가야 한다.
+ * 예전엔 `castleW/2` 만 비워 두고 성을 월드 끝점에 중심 정렬했다.
+ */
+export function fieldPad(w: number, h: number): number {
+  return Math.min(w * 0.3, Math.max(56, castleSize(w, h).w + 6));
+}
+
+/** 월드 x → 화면 px */
+export function worldToScreen(x: number, w: number, h: number): number {
+  const pad = fieldPad(w, h);
+  return pad + (x / MAP_LEN) * (w - pad * 2);
+}
+/** 화면 px → 월드 x (테스트가 성 상자를 월드 좌표로 되돌릴 때 쓴다) */
+export function screenToWorld(px: number, w: number, h: number): number {
+  const pad = fieldPad(w, h);
+  return ((px - pad) / (w - pad * 2)) * MAP_LEN;
+}
+
+/**
+ * 성 스프라이트가 실제로 그려지는 화면 상자. **`drawCastle` 이 이 함수를 쓴다** —
+ * 테스트가 여기를 재면 진짜 그리는 자리를 재는 것이 된다(공식을 테스트에 복붙하면
+ * 무엇도 검증하지 못한다 — 이미 한 번 겪은 함정이다).
+ */
+export function castleBox(w: number, h: number, ally: boolean): { x: number; w: number; h: number } {
+  const c = castleSize(w, h);
+  const cx = worldToScreen(ally ? 0 : MAP_LEN, w, h);
+  return { x: ally ? cx - c.w : cx, w: c.w, h: c.h };
+}
+
 export class FieldRenderer {
   private ctx: CanvasRenderingContext2D;
   private dpr = 1;
@@ -66,17 +106,32 @@ export class FieldRenderer {
     this.puffs.push({ x, side, at: performance.now() });
   }
 
+  /**
+   * 성문이 열리는 표시 — 적이 나오는 **순간**을 잡아 준다.
+   * 적은 성문 앞에서 1초 안팎이면 쓰러지므로(실측), 등장 신호가 없으면 아이는 그 1초를
+   * 놓치고 "적이 안 나왔다"고 느낀다. 죽는 자리(`puff`)와 짝을 이루는 표시다.
+   */
+  private gates: { at: number }[] = [];
+  private static readonly GATE_MS = 520;
+
+  gate(): void {
+    if (this.opts.reduceMotion) return;
+    if (this.gates.length > 6) this.gates.shift();
+    this.gates.push({ at: performance.now() });
+  }
+
   shake(mag = 4): void {
     if (this.opts.reduceMotion) return;
     this.shakeMag = mag;
     this.shakeUntil = performance.now() + 180;
   }
 
+  private castleSize(): { w: number; h: number } { return castleSize(this.w, this.h); }
+  private pad(): number { return fieldPad(this.w, this.h); }
+
   /** 월드 x(0~1000) → 화면 x */
   private sx(x: number): number {
-    // 성 스프라이트 절반이 들어갈 만큼은 비워 둔다(안 그러면 양 끝 성이 잘린다)
-    const castleW = Math.min(160, this.h * 0.5) * 0.9;
-    const pad = Math.min(this.w * 0.12, Math.max(70, castleW / 2 + 8));
+    const pad = this.pad();
     return pad + (x / MAP_LEN) * (this.w - pad * 2);
   }
 
@@ -103,8 +158,10 @@ export class FieldRenderer {
     ctx.fillStyle = 'rgba(52,40,28,0.20)';
     ctx.fillRect(0, groundY, this.w, this.h - groundY);
 
-    this.drawCastle(this.sx(0), groundY, 'castle_ally', b.playerCastleHp / b.stage.playerCastleHp, true);
-    this.drawCastle(this.sx(MAP_LEN), groundY, 'castle_foe', b.castleHp / b.stage.castleHp, false);
+    this.drawCastle(groundY, 'castle_ally', b.playerCastleHp / b.stage.playerCastleHp, true);
+    this.drawCastle(groundY, 'castle_foe', b.castleHp / b.stage.castleHp, false);
+    // 성문 표시는 성 **위**, 유닛 **아래** — 나오는 적이 표시에 가리지 않게
+    this.drawGates(groundY, now);
 
     // 유닛 — 뒤쪽(작은 x)부터 그려 앞줄이 위에 오게 한다
     const sorted = [...b.units].sort((p, q) => p.x - q.x);
@@ -112,6 +169,35 @@ export class FieldRenderer {
 
     this.drawPuffs(groundY, now);
     ctx.restore();
+  }
+
+  /** 성문이 열린다 — 적 성 안쪽 면에서 빛이 번지고 땅에 그림자가 진다 */
+  private drawGates(groundY: number, now: number): void {
+    if (!this.gates.length) return;
+    const { ctx } = this;
+    const gx = this.sx(MAP_LEN);
+    const { h: ch } = this.castleSize();
+    for (let i = this.gates.length - 1; i >= 0; i--) {
+      const g = this.gates[i]!;
+      const k = (now - g.at) / FieldRenderer.GATE_MS;
+      if (k >= 1) { this.gates.splice(i, 1); continue; }
+      const a = 1 - k;
+      const gh = ch * 0.55;
+      const gw = gh * 0.5 * (0.7 + k * 0.6);
+      ctx.save();
+      const grd = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+      grd.addColorStop(0, `rgba(255,214,120,${0.75 * a})`);
+      grd.addColorStop(1, 'rgba(255,214,120,0)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(gx, groundY - gh, gw, gh);
+      // 발밑 먼지 — 문이 열렸다는 걸 지면에서도 읽게 한다
+      ctx.globalAlpha = 0.5 * a;
+      ctx.fillStyle = '#6b5a44';
+      ctx.beginPath();
+      ctx.ellipse(gx, groundY, 14 + k * 22, 5 + k * 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   /** 쓰러진 자리 표시 — 먹이 번지듯 커지며 옅어진다 */
@@ -136,12 +222,22 @@ export class FieldRenderer {
     ctx.globalAlpha = 1;
   }
 
-  private drawCastle(cx: number, groundY: number, key: string, ratio: number, ally: boolean): void {
+  /**
+   * 성을 그린다.
+   *
+   * 🔴 **성은 전장 밖에 세운다 — 월드 끝점에 중심을 맞추지 않는다.**
+   *    예전에는 `x = cx - w/2` 로 성의 한가운데를 월드 0/1000 에 뒀다. 성 스프라이트는
+   *    월드 단위로 195칸(맵 전체의 19.5%)이나 되기 때문에, 그 **안쪽 절반이 전투 구역을 덮었다.**
+   *    실측(900×480): 적 성이 월드 902.7~1097.3 을 차지 → 적은 월드 1000(성 한가운데)에서
+   *    태어나고, 근접 아군은 월드 963(역시 성 안쪽)까지 파고들어 멈춘다. 둘 다 검은 성 그림
+   *    위에 겹쳐 그려져서, 아이 눈에는 "적이 성에서 안 나온다"로 보였다(실사용자 보고 2회).
+   *    이제 성의 **안쪽 면이 월드 끝점**이다 — 성문 앞이 전부 빈 땅이라 교전이 그대로 보인다.
+   *    시뮬은 손대지 않는다(밸런스 불변). 순수 좌표 문제였다.
+   */
+  private drawCastle(groundY: number, key: string, ratio: number, ally: boolean): void {
     const { ctx } = this;
     const img = getImage(key);
-    const h = Math.min(160, this.h * 0.5);
-    const w = h * 0.9;
-    const x = cx - w / 2;
+    const { x, w, h } = castleBox(this.w, this.h, ally);   // 우리 성은 왼쪽 밖, 적 성은 오른쪽 밖
     const y = groundY - h;
     if (img) {
       ctx.drawImage(img, x, y, w, h);
@@ -153,7 +249,9 @@ export class FieldRenderer {
     // 낮은 화면에서는 성 위 공간이 부족해 HP 바·라벨이 캔버스 위로 잘린다 → 아래로 밀어 둔다
     const bw = w * 1.15, bh = 12, by = Math.max(18, y - 20);
     // 🔴 성이 화면 끝에 붙어 있으면 HP 바가 캔버스 밖으로 잘린다 → 좌우로 가둔다
-    const bx = Math.max(4, Math.min(this.w - bw - 4, cx - bw / 2));
+    //    기준은 월드 끝점(cx)이 아니라 **성 스프라이트의 한가운데**다 — 성을 밖으로 옮긴 뒤로
+    //    둘이 반 칸 어긋난다.
+    const bx = Math.max(4, Math.min(this.w - bw - 4, x + w / 2 - bw / 2));
     ctx.fillStyle = '#0008'; ctx.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
     ctx.fillStyle = '#e6ded1'; ctx.fillRect(bx, by, bw, bh);
     ctx.fillStyle = ally ? '#2e8b6f' : '#d4342f';

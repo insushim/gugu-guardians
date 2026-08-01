@@ -42,7 +42,7 @@ export class Battle {
   private spawnNext = new Map<string, number>();
   private spawnCount = new Map<string, number>();
   /** 렌더/사운드가 소비하는 1회성 이벤트 큐 */
-  events: { type: 'hit' | 'die' | 'summon' | 'castleHit'; x: number; side: 1 | -1 }[] = [];
+  events: { type: 'hit' | 'die' | 'summon' | 'castleHit' | 'spawn'; x: number; side: 1 | -1 }[] = [];
 
   /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
   private levels: Readonly<Record<string, number>>;
@@ -209,6 +209,12 @@ export class Battle {
             swingAt: -99,
           });
           this.spawnCount.set(s.id, n + 1);
+          // 🔴 적이 **나왔다는 사실 자체**를 렌더러에 알린다. 전선이 적 성에 닿은 뒤로는
+          //    적이 성문에서 나오자마자 0.7~1.5초 만에 죽는다(ST1 실측: 3번째 적부터
+          //    한 픽셀도 못 움직이고 사망). 그 짧은 등장이 표시되지 않으면 아이 눈에는
+          //    "적이 아예 안 나온다"로 보인다 — 실사용자가 두 번 보고한 그 증상이다.
+          //    이벤트는 그리기 전용이라 시뮬 수치에는 영향이 없다.
+          this.events.push({ type: 'spawn', x: MAP_LEN, side: -1 });
         }
       }
       this.spawnNext.set(s.id, this.t + s.every);
