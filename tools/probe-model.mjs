@@ -79,11 +79,22 @@ export const BUDGET_K = 2340 * SWEEP_BUDGET;
  * 🔴 0단계는 종전 밸런스와 완전히 같아야 한다: 배율 1.0 · 돌파 0 · 광역 0 · 목표정답률 0.85.
  */
 export const MAX_TIER = 8;
-export const TIER_ATK = [1.0, 1.7, 2.6, 3.6, 4.8, 6.2, 7.8, 9.6, 11.6];
+export const TIER_ATK = [1.0, 1.7, 2.6, 3.6, 4.9, 6.6, 8.9, 12.0, 16.2];
 export const TIER_BREAK = [0, 0.15, 0.25, 0.34, 0.42, 0.50, 0.58, 0.64, 0.70];
 export const TIER_AOE = [0, 0, 70, 85, 100, 115, 130, 145, 160];
 export const TIER_TARGET_P = [0.85, 0.84, 0.82, 0.81, 0.79, 0.78, 0.77, 0.77, 0.77];
 const tclamp = (t) => Math.max(0, Math.min(MAX_TIER, Math.floor(Number.isFinite(t) ? t : 0)));
+
+// 성문 앞 통로 / 예비대 — src/sim/core.ts 와 1:1 (tests/tier.spec.ts 가 값을 대조한다)
+export const ALLY_CEIL_GAP = 90;
+const ALLY_CEIL = MAP_LEN - ALLY_CEIL_GAP;
+export const RESERVE_SHARE = 0.25;
+
+/**
+ * 예비대가 **다 나와 있어야 하는** 성 진행도. 1.0 으로 두면 마지막 예비대가
+ * 성이 무너지는 순간 나와 사실상 안 싸운다(실측: 게이트가 오히려 쉬워져 3건 실패).
+ */
+export const RESERVE_COVER = 0.85;
 
 /**
  * 단계 승강 규칙 — src/sim/tier.ts 의 nextTier 와 1:1.
@@ -287,6 +298,9 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
   let wrongStreak = 0, rightStreak = 0, ddaLevel = 0;
   let myCastle = def.playerCastleHp;
   let enCastle = def.castleHp;
+  let maxAllyX = 0;   // 테스트가 통로 거동을 검사한다 — tests/spawn-corridor.spec.ts
+  /** 스폰 시각 기록 — 미러 테스트가 **상수가 아니라 거동**을 코어와 대조한다 */
+  const spawnLog = [];
 
   const units = [];
   const cds = {};
@@ -366,6 +380,18 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
     for (const s of def.spawns) {
       if (t >= (spawnNext[s.id] ?? Infinity)) {
         const n = spawnedCount[s.id] ?? 0;
+        // 예비대 — src/sim/core.ts 의 RESERVE_SHARE 와 1:1
+        // 🔴 `ceil` 만 쓰면 cap 1~3 에서 onTime === cap 이 되어 **예비대가 0기**가 된다
+        //    (12판은 웨이브 8개 중 4개가 여기 걸렸다 — 주석은 "뒤쪽 25%"라는데 실제론 안 걸렸다).
+        //    cap 1(수문장)은 시간표대로 나와야 하므로 예외로 두고, 2 이상은 최소 1기를 남긴다.
+        const onTime = s.cap <= 1 ? s.cap : Math.min(s.cap - 1, Math.ceil(s.cap * (1 - RESERVE_SHARE)));
+        if (n >= onTime) {
+          const progress = 1 - enCastle / def.castleHp;
+          if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, s.cap - onTime)) {
+            // 미루지 않는다 — src/sim/core.ts 와 동일(진행도를 넘긴 즉시 나와야 한다)
+            continue;
+          }
+        }
         if (n < s.cap) {
           const e = ENEMIES.find((x) => x.id === s.id);
           // 돌파형 판정은 난수가 아니라 스폰 순번으로 균등 배분(src/sim/core.ts breakerRoll 과 동일)
@@ -382,6 +408,7 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
             aoe: TIER_AOE[T] > 0 && e.spd <= 24 ? TIER_AOE[T] : 0,
           });
           spawnedCount[s.id] = n + 1;
+          spawnLog.push({ id: s.id, t: Math.round(t * 30) / 30, p: 1 - enCastle / def.castleHp });
         }
         spawnNext[s.id] = t + s.every;
       }
@@ -394,6 +421,8 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
     let allyFront = -Infinity;
     for (const u of units) if (u.side === 1 && u.hp > 0) allyFront = Math.max(allyFront, u.x);
     const enemyFloor = allyFront === -Infinity ? 0 : Math.max(0, allyFront - 60);
+    // 테스트가 **거동**을 검사할 수 있게 최대 전진 위치를 남긴다(상수만 대조하면 미러 누락을 못 잡는다)
+    if (allyFront > maxAllyX) maxAllyX = allyFront;
 
     const haste = hasteOf(hasteBoost);
     for (const u of units) {
@@ -408,7 +437,8 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
         }
       }
       const castleDist = u.side === 1 ? Math.abs(MAP_LEN - u.x) : Math.abs(u.x - 0);
-      if (!target && castleDist <= u.range) {
+      const atCeil = u.side === 1 && u.x >= ALLY_CEIL - 1e-6;
+      if (!target && (castleDist <= u.range || atCeil)) {
         if (t >= u.atkAt) {
           if (u.side === 1) enCastle -= u.atk; else myCastle -= u.atk;
           u.atkAt = t + u.aspd / hs;
@@ -429,15 +459,17 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0) {
         u.x += u.side * u.spd * hs * DT;
         // 돌파형에게는 전진 상한을 걸지 않는다 — 지나가는 것이 그 유닛의 존재 이유다
         if (u.side === -1 && !u.breaker) u.x = Math.max(enemyFloor, u.x);
+        // 아군은 성문 앞 통로를 침범하지 않는다 — src/sim/core.ts 의 ALLY_CEIL 과 1:1
+        if (u.side === 1) u.x = Math.min(ALLY_CEIL, u.x);
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
     }
 
     // 6) 정리 / 승패
     for (let i = units.length - 1; i >= 0; i--) if (units[i].hp <= 0) units.splice(i, 1);
-    if (enCastle <= 0) return { win: true, time: t, solved, correct, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp) };
-    if (myCastle <= 0) return { win: false, time: t, solved, correct, myCastleLeft: 0 };
+    if (enCastle <= 0) return { win: true, time: t, solved, correct, maxAllyX, spawnLog, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp) };
+    if (myCastle <= 0) return { win: false, time: t, solved, correct, maxAllyX, spawnLog, myCastleLeft: 0 };
     t += DT;
   }
-  return { win: false, time: MAX_SEC, solved, correct, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp), timeout: true };
+  return { win: false, time: MAX_SEC, solved, correct, maxAllyX, spawnLog, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp), timeout: true };
 }

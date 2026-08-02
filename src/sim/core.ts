@@ -9,6 +9,30 @@ import {
 } from './economy';
 
 /**
+ * 성문 앞 통로 폭. 아군은 `MAP_LEN - ALLY_CEIL_GAP` 보다 앞으로 못 간다.
+ * 🔴 이 값이 0 이면 적이 나올 자리가 사라진다 — 적 스폰 지점(MAP_LEN)과 근접 아군의
+ *    정지선이 화면상 23px 까지 붙어, 나오는 적이 아군 스프라이트에 파묻힌 채 죽는다.
+ */
+export const ALLY_CEIL_GAP = 90;
+const ALLY_CEIL = MAP_LEN - ALLY_CEIL_GAP;
+
+/**
+ * 예비대 비율 — 스폰 총량 중 **뒤쪽 이만큼은 시간이 아니라 적 성이 깎인 만큼** 나온다.
+ * 🔴 판이 끝나는 조건은 시간이 아니라 **적 성 체력 0** 인데 스폰은 시간표만 봤다.
+ *    그래서 12판에서 121초짜리 판의 마지막 65초(54%) 동안 적이 한 마리도 안 나왔다.
+ *    총량은 그대로 두고 **언제 나오는지만** 성 진행도에 묶는다 —
+ *    stages.ts 가 경고한 "느릴수록 적이 누적되는 죽음의 나선"은 총량이 늘어야 생기므로,
+ *    총량을 건드리지 않는 이 방식은 그 위험이 없다.
+ */
+export const RESERVE_SHARE = 0.25;
+
+/**
+ * 예비대가 **다 나와 있어야 하는** 성 진행도. 1.0 으로 두면 마지막 예비대가
+ * 성이 무너지는 순간 나와 사실상 안 싸운다(실측: 게이트가 오히려 쉬워져 3건 실패).
+ */
+export const RESERVE_COVER = 0.85;
+
+/**
  * 전투 시뮬레이션 코어 — DOM/렌더러 의존 0. 고정 타임스텝.
  *
  * 🔎 전투 추상화(중요): 앞줄 유닛들이 겹쳐 서서 함께 때리는 '클러스터' 모델이다.
@@ -43,7 +67,14 @@ export class Battle {
   private spawnNext = new Map<string, number>();
   private spawnCount = new Map<string, number>();
   /** 렌더/사운드가 소비하는 1회성 이벤트 큐 */
-  events: { type: 'hit' | 'die' | 'summon' | 'castleHit' | 'spawn'; x: number; side: 1 | -1 }[] = [];
+  events: {
+    type: 'hit' | 'die' | 'summon' | 'castleHit' | 'spawn';
+    x: number;
+    side: 1 | -1;
+    /** 때린 쪽의 위치. 원거리 공격을 **날아가는 것**으로 그리려면 출발점이 필요하다.
+     *  🔴 그리기 전용이다 — 시뮬 수치에는 쓰지 않는다. */
+    from?: number;
+  }[] = [];
 
   /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
   private levels: Readonly<Record<string, number>>;
@@ -209,6 +240,21 @@ export class Battle {
       const next = this.spawnNext.get(s.id);
       if (next === undefined || this.t < next) continue;
       const n = this.spawnCount.get(s.id) ?? 0;
+      // 예비대: 앞쪽은 시간표대로, 뒤쪽은 적 성이 깎인 만큼 나온다(RESERVE_SHARE 주석 참고).
+      // 총량(s.cap)은 그대로다 — 늦게 깬다고 적이 더 나오지는 않는다.
+      // 🔴 `ceil` 만 쓰면 cap 1~3 에서 onTime === cap 이 되어 **예비대가 0기**가 된다
+      //    (12판은 웨이브 8개 중 4개가 여기 걸렸다 — 주석은 "뒤쪽 25%"라는데 실제론 안 걸렸다).
+      //    cap 1(수문장)은 시간표대로 나와야 하므로 예외로 두고, 2 이상은 최소 1기를 남긴다.
+      const onTime = s.cap <= 1 ? s.cap : Math.min(s.cap - 1, Math.ceil(s.cap * (1 - RESERVE_SHARE)));
+      if (n >= onTime) {
+        const progress = 1 - this.castleHp / this.stage.castleHp;
+        if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, s.cap - onTime)) {
+          // 🔴 여기서 `spawnNext` 를 미루면 안 된다. 미루면 진행도를 넘긴 뒤에도
+          //    **다음 폴링(every 초)까지 기다리다**, 그 사이 판이 끝나면 영영 안 나온다
+          //    (실측: COVER 0.9 에서 16기 중 2기가 끝내 미출전). 매 프레임 다시 본다.
+          continue;
+        }
+      }
       if (n < s.cap) {
         const e = ENEMY_BY_ID.get(s.id);
         if (e) {
@@ -290,7 +336,13 @@ export class Battle {
       }
 
       const castleDist = u.side === 1 ? Math.abs(MAP_LEN - u.x) : Math.abs(u.x - 0);
-      if (!target && castleDist <= u.range) {
+      // 🔴 성문 앞 통로. 아군이 적 성문(1000)까지 붙어 버리면 **적이 나올 자리가 없다** —
+      //    적은 1000에서 나오고 근접 아군은 962에 서므로 화면상 23px, 스프라이트 폭(60~90px)
+      //    안쪽이다. 실측: 전선이 성에 닿은 뒤 나온 적 31/31기가 **한 픽셀도 못 움직이고**
+      //    평균 0.8초 만에 죽었다. 아이 눈에는 "적이 아예 안 나온다"로 보인 그 증상이다.
+      //    적의 enemyFloor(아군 전선을 60 넘게 못 파고든다)와 대칭인 상한이다.
+      const atCeil = u.side === 1 && u.x >= ALLY_CEIL - 1e-6;
+      if (!target && (castleDist <= u.range || atCeil)) {
         if (this.t >= u.atkAt) {
           if (u.side === 1) this.castleHp -= u.atk;
           else this.playerCastleHp -= u.atk;
@@ -311,6 +363,8 @@ export class Battle {
         u.x += u.side * u.spd * hs * dt;
         // 돌파형에게는 전진 상한을 걸지 않는다 — 지나가는 것이 그 유닛의 존재 이유다
         if (u.side === -1 && !u.breaker) u.x = Math.max(enemyFloor, u.x);
+        // 아군은 성문 앞 통로를 침범하지 않는다(위 atCeil 주석 참고)
+        if (u.side === 1) u.x = Math.min(ALLY_CEIL, u.x);
         u.x = Math.max(0, Math.min(MAP_LEN, u.x));
       }
     }
@@ -326,7 +380,7 @@ export class Battle {
     if (r <= 0) {
       target.hp -= u.atk;
       target.hurtAt = this.t;
-      this.events.push({ type: 'hit', x: target.x, side: target.side });
+      this.events.push({ type: 'hit', x: target.x, side: target.side, from: u.x });
       return;
     }
     for (const v of this.units) {
@@ -335,7 +389,7 @@ export class Battle {
       v.hp -= u.atk;
       v.hurtAt = this.t;
     }
-    this.events.push({ type: 'hit', x: target.x, side: target.side });
+    this.events.push({ type: 'hit', x: target.x, side: target.side, from: u.x });
   }
 
   private cleanup(): void {

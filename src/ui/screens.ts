@@ -408,6 +408,13 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
     const d = store.load();
     if (d.currency.meokmul < cost) return;
 
+    // 🔴 뽑기 **전** 상태를 남겨 둔다. 10연은 한 번에 커밋되므로 결과 화면이 저장을 그냥 읽으면
+    //    같은 셈지기가 두 번 나왔을 때 **먼저 열리는 카드가 이미 두 장 몫의 조각**을 보여 준다
+    //    ("아직 모자란데 벌써 올릴 수 있대"). 열리는 순서대로 다시 쌓아 보여 준다.
+    const before = store.load();
+    const shardsAt = new Map<string, number>();
+    for (const [id, e] of Object.entries(before.roster)) shardsAt.set(id, e.shards);
+
     let results: SummonResult[] = [];
     store.update((s) => {
       s.currency.meokmul -= cost;
@@ -420,17 +427,45 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
     const order = [...results].sort((a, b) => rarityRank(a.rarity) - rarityRank(b.rarity));
     stage.replaceChildren();
     clearTimers();
-    order.forEach((res, i) => {
+    const after = store.load();
+    let delay = 0;
+    order.forEach((res) => {
+      const rank = rarityRank(res.rarity);
+      const at = delay;
+      // 🔴 좋은 게 나올수록 **뜸을 들인다.** 전부 220ms 로 똑같이 넘기면 전설도 잡몹과
+      //    같은 속도로 지나가 "뭐가 좋은 건지" 자체가 안 읽힌다(실사용자: "이펙트가 없어서 심심함").
+      delay += rank >= 2 ? 620 : 240;
+      // 이 카드가 열리는 시점까지 쌓인 조각(뽑기 전 + 여기까지의 중복분)
+      const shardsNow = (shardsAt.get(res.unit.id) ?? 0) + res.shards;
+      shardsAt.set(res.unit.id, shardsNow);
       timers.push(setTimeout(() => {
-        const card = unitCard(res.unit, { level: 1, reveal: true, compact: true });
-        const tagText = res.isNew ? 'NEW' : `조각 +${res.shards}`;
-        card.append(el('span', { class: `ucard-tag${res.isNew ? ' new' : ''}` }, tagText));
+        const entry = after.roster[res.unit.id];
+        // 🔴 예전엔 level:1 을 박아 넣어, 3레벨까지 키운 셈지기를 뽑아도 결과 카드가 Lv.1 이라고 했다
+        const lv = entry?.level ?? 1;
+        const card = unitCard(res.unit, { level: lv, reveal: true, compact: true });
+        if (rank >= 2) card.classList.add('jackpot');   // 유니크 이상 — 10연 확정 등급이 여기 걸린다
+        if (res.isNew) {
+          card.append(el('span', { class: 'ucard-tag new' }, '처음 만났어요!'));
+        } else {
+          // 🔴 "조각 +6" 만으로는 아이에게 꽝으로 읽힌다(실사용자: "똑같은 애가 나오네??").
+          //    조각이 **무엇을 위한 것이고 얼마나 남았는지**를 그 자리에서 말해 준다.
+          card.append(el('span', { class: 'ucard-tag' }, `조각 +${res.shards}`));
+          // 🔴 만렙이면 다음 레벨이 **없다.** `canUpgrade` 는 만렙과 조각 부족을 구분하지 않아
+          //    그냥 false 를 주는데, 그걸 "부족"으로 읽으면 보통 등급(최대 5레벨·뽑힐 확률 55%)이
+          //    5레벨에 닿는 순간부터 영영 "6레벨까지 1개"라는 없는 안내를 한다.
+          const capped = lv >= maxLevel(res.unit.rarity);
+          const need = upgradeCost(lv + 1) - shardsNow;
+          const tail = capped ? '이미 최고 레벨이에요'
+            : need <= 0 ? `${lv + 1}레벨로 올릴 수 있어요!`
+            : `${need}개 더 모으면 ${lv + 1}레벨!`;
+          card.append(el('span', { class: `ucard-need${capped ? ' capped' : ''}` }, tail));
+        }
         stage.append(card);
-        if (rarityRank(res.rarity) >= 3) play('win');
+        if (rank >= 2) play('win');
         refreshHead();
-      }, i * 220));
+      }, at));
     });
-    timers.push(setTimeout(refreshHead, order.length * 220 + 50));
+    timers.push(setTimeout(refreshHead, delay + 50));
   }
 
   // ── 셈력 그릇 강화 ─────────────────────────────────────────────────────

@@ -119,6 +119,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   }, el('span', { class: 'ic' }, '💥'), el('span', { class: 'lb' }, '먹 대포'), cannonFill) as HTMLButtonElement;
   cannonBtn.addEventListener('click', () => {
     if (!battle.fireCannon()) return;
+    renderer.cannonSweep();
     renderer.shake(9);
     play('hit');
     flash(cannonBtn);
@@ -329,6 +330,9 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       //    아무 표시가 없어 "적이 안 나온다"로 보였다. 쓰러진 자리를 잠깐 남긴다.
       for (const e of battle.events) {
         if (e.type === 'die') renderer.puff(e.x, e.side);
+        // 원거리 공격을 **날아가는 것**으로 그린다 — 시뮬은 즉시 체력을 깎으므로
+        // 이 표시가 없으면 멀리서 때리는 셈지기가 뭘 하는지 화면에서 안 읽힌다
+        else if (e.type === 'hit' && e.from !== undefined) renderer.shot(e.from, e.x, e.side);
         // 'spawn' 도 같은 이유로 읽는다 — 나오는 순간과 쓰러지는 순간이 짝이어야
         // "성문에서 나왔다가 맞고 쓰러졌다"가 한 장면으로 읽힌다.
         else if (e.type === 'spawn') renderer.gate();
@@ -360,6 +364,8 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       // 🔴 지금 무엇을 묻고 있는지. 화면 글자만으로는 **유형·레벨을 복원할 수 없어**
       //    "난이도가 실제로 오르는가"를 측정할 방법이 없다(레벨은 프롬프트에 안 드러난다).
       q: current ? { key: current.key, type: current.type, level: current.level, dda: battle.dda.level } : null,
+      // 연출이 실제로 났는지 — 캔버스를 눈으로 세는 대신 숫자로 확인한다
+      fx: { shots: renderer.shotsFired, sweeps: renderer.sweeps },
     };
     syncHud();
     syncDeck();

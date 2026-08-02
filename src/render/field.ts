@@ -126,6 +126,45 @@ export class FieldRenderer {
     this.shakeUntil = performance.now() + 180;
   }
 
+  /**
+   * 원거리 공격이 **날아가는 것**으로 보이게 한다.
+   * 🔴 시뮬은 사거리 안이면 즉시 체력을 깎는다(청룡 사거리 250 vs 짚신이 38). 그래서
+   *    멀리서 때리는 셈지기는 제자리에서 0.18초 흔들릴 뿐이고, 아이 눈에는 **뭘 하는지
+   *    안 보였다**(실사용자 보고). 이 자국은 그리기 전용 — 맞은 결과는 이미 났고,
+   *    날아가는 그림은 그 사실을 눈에 보이게 옮겨 적는 것뿐이라 밸런스에 영향이 없다.
+   */
+  private shots: { from: number; to: number; side: 1 | -1; at: number }[] = [];
+  private static readonly SHOT_MS = 170;
+  /** 이 거리(월드) 밖에서 때렸으면 원거리로 본다 — 근접끼리 부딪히는 건 그리지 않는다 */
+  private static readonly SHOT_MIN = 62;
+
+  /** 검수 하네스가 읽는다 — 화면을 눈으로 세는 대신 숫자로 확인하려고 둔다 */
+  shotsFired = 0;
+  sweeps = 0;
+
+  shot(from: number, to: number, side: 1 | -1): void {
+    if (this.opts.reduceMotion) return;
+    if (Math.abs(to - from) < FieldRenderer.SHOT_MIN) return;
+    if (this.shots.length >= 40) this.shots.shift();
+    this.shots.push({ from, to, side, at: performance.now() });
+    this.shotsFired++;
+  }
+
+  /**
+   * 먹 대포 — 우리 성에서 먹물 파도가 전장을 쓸고 지나간다.
+   * 🔴 예전엔 전용 연출이 아예 없었다(화면 흔들림 4px + 기존 피격음뿐).
+   *    정답 12개를 모아 쏘는 이 게임 최대의 보상인데 화면에서 아무 일도 안 일어났다.
+   */
+  private sweepAt = -1;
+  private static readonly SWEEP_MS = 620;
+
+  cannonSweep(): void {
+    // 🔴 `shotsFired` 와 같은 규칙이어야 한다 — 안 그리는데 세면 하네스가 "연출 났다"로 오판한다
+    if (this.opts.reduceMotion) return;
+    this.sweepAt = performance.now();
+    this.sweeps++;
+  }
+
   private castleSize(): { w: number; h: number } { return castleSize(this.w, this.h); }
   private pad(): number { return fieldPad(this.w, this.h); }
 
@@ -167,7 +206,75 @@ export class FieldRenderer {
     const sorted = [...b.units].sort((p, q) => p.x - q.x);
     for (const u of sorted) this.drawUnit(u, groundY, b.t);
 
+    this.drawShots(groundY, now);
     this.drawPuffs(groundY, now);
+    this.drawSweep(groundY, now);
+    ctx.restore();
+  }
+
+  /** 날아가는 먹덩이 — 출발점에서 목표까지 짧게 호를 그린다 */
+  private drawShots(groundY: number, now: number): void {
+    if (!this.shots.length) return;
+    const { ctx } = this;
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const s = this.shots[i]!;
+      const k = (now - s.at) / FieldRenderer.SHOT_MS;
+      if (k >= 1) { this.shots.splice(i, 1); continue; }
+      const x = this.sx(s.from + (s.to - s.from) * k);
+      // 어깨 높이에서 떠서 목표로 떨어진다 — 포물선이라 "던졌다"가 읽힌다
+      const y = groundY - 34 - Math.sin(k * Math.PI) * 16;
+      ctx.save();
+      // 꼬리 — 진행 방향 반대로 옅게 끈다
+      const tail = this.sx(s.from + (s.to - s.from) * Math.max(0, k - 0.18));
+      const g = ctx.createLinearGradient(tail, y, x, y);
+      const col = s.side === -1 ? '34,29,26' : '212,52,47';   // 적을 맞히면 먹빛, 아군이 맞으면 주홍
+      g.addColorStop(0, `rgba(${col},0)`);
+      g.addColorStop(1, `rgba(${col},.8)`);
+      ctx.strokeStyle = g; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tail, y); ctx.lineTo(x, y); ctx.stroke();
+      ctx.fillStyle = `rgba(${col},.92)`;
+      ctx.beginPath(); ctx.arc(x, y, 3.4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /** 먹 대포 — 우리 성에서 먹물 파도가 전장을 쓸고 간다 */
+  private drawSweep(groundY: number, now: number): void {
+    if (this.sweepAt < 0) return;
+    const k = (now - this.sweepAt) / FieldRenderer.SWEEP_MS;
+    if (k >= 1) { this.sweepAt = -1; return; }
+    const { ctx } = this;
+    const head = this.sx(0) + (this.sx(MAP_LEN) - this.sx(0)) * Math.min(1, k * 1.2);
+    const back = Math.max(0, head - 260);
+    const a = 1 - k * k;                       // 뒤로 갈수록 빨리 옅어진다
+    const top = groundY - this.h * 0.82;       // 하늘까지 올라와야 "쓸고 간다"가 읽힌다
+    ctx.save();
+    // 먹물 본체
+    const g = ctx.createLinearGradient(back, 0, head, 0);
+    g.addColorStop(0, 'rgba(24,19,17,0)');
+    g.addColorStop(0.6, `rgba(24,19,17,${0.55 * a})`);
+    g.addColorStop(1, `rgba(24,19,17,${0.88 * a})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(back, top, head - back, groundY - top);
+    // 앞머리 — 밝은 금빛 띠 한 줄. 어두운 본체와 대비돼 진행 방향이 한눈에 읽힌다
+    const eg = ctx.createLinearGradient(head - 26, 0, head + 8, 0);
+    eg.addColorStop(0, 'rgba(232,179,58,0)');
+    eg.addColorStop(1, `rgba(255,236,170,${0.95 * a})`);
+    ctx.fillStyle = eg;
+    ctx.fillRect(head - 26, top, 34, groundY - top);
+    // 튀는 먹방울 — 위아래로 흩어져 "터졌다"를 만든다
+    for (let i = 0; i < 14; i++) {
+      const t = i / 14;
+      const r = 3 + ((i * 7) % 5);
+      const y = top + (groundY - top) * ((i * 0.37) % 1);
+      const dx = ((i % 3) - 1) * 26 - k * 40;
+      ctx.fillStyle = i % 4 === 0
+        ? `rgba(255,236,170,${0.8 * a})`
+        : `rgba(24,19,17,${(0.5 + t * 0.4) * a})`;
+      ctx.beginPath();
+      ctx.arc(head + dx, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
