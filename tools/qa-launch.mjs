@@ -9,7 +9,7 @@
  *    rAF 가 멈춰 시뮬이 실제의 0.4배로 흐른다 — 한 판을 끝까지 돌리지 못한다(실측).
  *    페이지 안에서 진짜 버튼을 클릭하게 하면 코드 경로는 같고 시계만 정상으로 흐른다.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import puppeteer from 'puppeteer';
 
 const URL_BASE = process.env.QA_URL ?? 'http://localhost:5183';
@@ -259,6 +259,36 @@ say(`  관측된 DDA 단계: ${ddaSeen.join(',')}`);
 const winCount = all.filter((r) => r.st === 'win').length;
 say(`  승리 ${winCount}/${all.length}판`);
 must(flat.length / all.length >= 20, `한 판 평균 문항이 ${(flat.length / all.length).toFixed(1)}개로 학습량 하한(20) 미달`);
+
+// ═══ B2. 신규 전투 킷이 **실제 브라우저에서** 나는가 ══════════════════════
+// 🔴 시뮬 테스트는 이벤트가 큐에 담기는 것까지만 본다. 큐에서 렌더러로 넘기는 한 줄이
+//    빠지면 게임 안에서는 아무 일도 안 일어나는데 테스트는 전부 초록이다 —
+//    이번에 성 타격 경로가 정확히 그 상태였다(교차검증 적발). 여기서 화면 쪽을 확인한다.
+say('\n## B2. 전설 특별기술·자리 상한 (실브라우저)');
+{
+  // 🔴 전설 id 를 손으로 적지 않는다 — 로스터가 바뀌면 조용히 없는 유닛을 쥐어 주게 된다
+  const roster = JSON.parse(readFileSync(new URL('../data/roster.json', import.meta.url).pathname, 'utf8'));
+  const LEGEND = roster.allies.find((u) => u.rarity === 'legend').id;
+  await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
+  await page.evaluate(() => localStorage.clear());
+  // 전설 + 값싼 물량을 쥐어 주고 뒤쪽 판으로 들어간다(전설이 실제로 나갈 셈력이 있어야 한다)
+  await page.evaluate((legend) => {
+    const ids = ['jipsin', 'kkachi', 'musoe', 'onggi', 'bungbung', legend];
+    localStorage.setItem('gugu:save', JSON.stringify({
+      version: 5,
+      data: {
+        progress: { maxStage: 12, cleared: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [String(i + 1), 3])) },
+        roster: Object.fromEntries(ids.map((id) => [id, { level: 5, shards: 0 }])),
+        deck: ids, codex: { unlocked: ids },
+        upgrades: { mana: 6, regen: 5, cannon: 5 },
+      },
+    }));
+  }, LEGEND);
+  const r = await playOne({ accuracy: 1.0, msPerQ: 600 });
+  const g = r?.g ?? {};
+  say(`  결과=${g.status} · 기술연출 ${g.fx?.skills ?? '?'}회 · 원거리 ${g.fx?.shots ?? '?'}발 · 최대자리 ${g.maxSlots ?? '?'}`);
+  must((g.fx?.skills ?? 0) > 0, `전설이 덱에 있는데 특별기술 연출이 ${g.fx?.skills ?? 0}회 — 이벤트가 렌더러까지 안 갔다`);
+}
 
 say(`\n## C. 콘솔 에러: ${errors.length}건`);
 for (const e of errors.slice(0, 12)) say(`  ! ${e}`);

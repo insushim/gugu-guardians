@@ -12,7 +12,7 @@
  * 검사 항목 (전부 관찰 가능한 것만):
  *   - 덱 카드가 한 장도 잘리지 않는가
  *   - 가장 긴 문항의 답 칸이 문제 상자 안에 들어오는가
- *   - 숫자패드 버튼이 저학년 터치 하한(44px)을 지키는가
+ *   - 숫자패드 버튼이 저학년 터치 하한을 지키는가(폭 44px · 높이 30px — 아래 상수 주석 참고)
  *   - 전장(캔버스)이 남아 있는가
  *   - 가로 스크롤이 생기지 않는가
  *
@@ -21,8 +21,22 @@
 import puppeteer from 'puppeteer';
 
 const APP = process.env['GUGU_APP'] ?? 'http://localhost:5184/';
-const TOUCH_MIN = 44;      // 저학년 터치 타겟 하한(px)
+const TOUCH_MIN = 44;      // 저학년 터치 타겟 **폭** 하한(px)
+/**
+ * 버튼 **높이** 하한.
+ * 🔴 44px 를 높이에도 걸면 낮은 화면에서 3줄 패드가 140px 이 되어 전장이 46% 로 떨어진다
+ *    (실측 800×360). 사용자가 요구한 건 전장을 넓히는 쪽이라, 높이는 맞바꿨다.
+ *    다만 **얼마나 맞바꿨는지 매번 보이게** 둔다 — 조용히 줄어들면 그때는 회귀다.
+ */
+const TOUCH_H_MIN = 30;
 const FIELD_MIN = 120;     // 전장이 이보다 얇으면 게임이 아니라 띠다
+/**
+ * 전장이 화면 세로에서 차지해야 할 최소 비율.
+ * 🔴 절대값(120px)만으로는 부족하다 — 낮은 화면에서 하단 조작줄이 절반을 먹어도 통과한다.
+ *    실사용자 보고 "모바일에서 실제 게임창 위아래로 더 넓게"가 그 상태였다(실측: 800×360
+ *    에서 전장이 화면의 49%). 게임 화면이 조작 UI보다는 커야 한다.
+ */
+const FIELD_RATIO_MIN = 0.58;
 
 /** 실제로 나오는 것 중 가장 긴 식들 — 두 자리 ± 두 자리가 최악이다(22판부터) */
 const WORST = ['5 × 3 = ', '12 × 8 = ', '48 ÷ 6 = ', '37 + 25 = ', '84 ÷ 7 = '];
@@ -124,6 +138,12 @@ function measure(worst) {
     pageOverflow: document.documentElement.scrollWidth > window.innerWidth,
     padW: Math.round(pad?.getBoundingClientRect().width ?? 0),
     quizW: Math.round(box?.getBoundingClientRect().width ?? 0),
+    // 전장이 좁을 때 **무엇이 먹고 있는지**까지 찍는다 — 안 그러면 매번 다시 재야 한다
+    hudH: Math.round(q('.bhud')?.getBoundingClientRect().height ?? 0),
+    controlH: Math.round(q('.control')?.getBoundingClientRect().height ?? 0),
+    padH: Math.round(pad?.getBoundingClientRect().height ?? 0),
+    deckH: Math.round(deck?.getBoundingClientRect().height ?? 0),
+    viewH: window.innerHeight,
   };
 }
 
@@ -147,12 +167,19 @@ for (const [w, h, name] of VIEWS) {
   if (m.deckHidden > 0) bad.push(`셈지기 ${m.deckHidden}px 잘림`);
   if (m.quizOver > 0) bad.push(`답 칸이 "${m.worstQ}__" 에서 ${m.quizOver}px 넘침`);
   if (m.padBtnW < TOUCH_MIN) bad.push(`숫자 버튼 폭 ${m.padBtnW}px (<${TOUCH_MIN})`);
+  if (m.padBtnH < TOUCH_H_MIN) bad.push(`숫자 버튼 높이 ${m.padBtnH}px (<${TOUCH_H_MIN})`);
   if (m.fieldH < FIELD_MIN) bad.push(`전장 높이 ${m.fieldH}px (<${FIELD_MIN})`);
+  const ratio = m.viewH > 0 ? m.fieldH / m.viewH : 0;
+  if (ratio < FIELD_RATIO_MIN) {
+    bad.push(`전장이 화면의 ${Math.round(ratio * 100)}% (<${Math.round(FIELD_RATIO_MIN * 100)}%)`
+      + ` — HUD ${m.hudH}px + 조작줄 ${m.controlH}px(패드 ${m.padH} · 덱 ${m.deckH})`);
+  }
   if (m.pageOverflow) bad.push('가로 스크롤 발생');
 
   console.log(
     `${bad.length ? '❌' : '✅'} ${name} ${w}×${h}\n` +
-    `     덱 ${m.cards}장 · 문제칸 ${m.quizW}px(여유 ${-m.quizOver}px) · 패드 ${m.padW}px(버튼 ${m.padBtnW}×${m.padBtnH}) · 전장 ${m.fieldH}px`,
+    `     덱 ${m.cards}장 · 문제칸 ${m.quizW}px(여유 ${-m.quizOver}px) · 패드 ${m.padW}px(버튼 ${m.padBtnW}×${m.padBtnH})` +
+    ` · 전장 ${m.fieldH}px(${Math.round(ratio * 100)}%) · HUD ${m.hudH} + 조작줄 ${m.controlH}`,
   );
   for (const b of bad) { console.log(`     └ ${b}`); fails.push(`${name} ${w}×${h}: ${b}`); }
   await page.close();

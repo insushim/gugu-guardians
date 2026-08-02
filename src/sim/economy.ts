@@ -32,6 +32,30 @@ export function baseRegen(stage: number): number {
   return 5.8 + Math.min(1.6, (Math.min(stage, 10) - 1) * 0.2);
 }
 
+// ── 셈력 샘(회복 속도 강화) ────────────────────────────────────────────────
+/**
+ * 먹물로 사는 **회복 속도** 강화. 그릇(용량)과 짝이다 — 그릇은 얼마나 담느냐,
+ * 샘은 얼마나 빨리 차느냐.
+ *
+ * 🔴 바닥선 자체를 올리는 게 아니라 **곱한다.** 바닥선은 스테이지에 따라 이미 움직이는데
+ *    거기에 상수를 더하면 초반 판에서만 체감이 커져 "1판이 갑자기 쉬워지는" 왜곡이 난다.
+ * 🔴 상한을 +40% 로 묶는다. 이 값이 커지면 문제를 안 풀어도 굴러가서
+ *    "정답의 하류에 쾌감을 둔다"는 이 게임의 축이 흔들린다(G3 학습 유인 게이트가 감시한다).
+ */
+export const REGEN_MAX_LV = 5;
+export const REGEN_PER_LV = 0.08;
+
+export function regenMult(level: number): number {
+  const lv = Math.max(0, Math.min(REGEN_MAX_LV, Math.floor(level)));
+  return 1 + REGEN_PER_LV * lv;
+}
+
+/** 다음 단계 강화 비용(먹물) — 그릇과 같은 완만한 곡선을 쓰되 조금 싸다(효과가 더 은근하므로) */
+export function regenCost(level: number): number {
+  const lv = Math.max(0, Math.floor(level));
+  return lv >= REGEN_MAX_LV ? Infinity : Math.round(180 * Math.pow(1.45, lv) / 10) * 10;
+}
+
 /** 직전 연속 정답 수 기준 배율 */
 export function comboMul(combo: number): number {
   if (combo >= 8) return 1.6;
@@ -171,11 +195,38 @@ export function hasteLabel(haste: number): string {
  *    ("게임 요소가 수학에서 주의를 빼앗는다"). 이 게임의 모든 쾌감 장치는 **정답의 하류**에 둔다.
  * 🔴 설명 문구로 가르치지 않는다 — 다 차면 버튼이 스스로 빛난다(PvZ 조지 팬: 텍스트 말고 행동으로).
  */
-export const CANNON_PER_CORRECT = 0.09;   // 정답 약 12개면 한 발
+/**
+ * 정답 1개가 채우는 충전량.
+ * 🔴 0.09(정답 12개에 한 발)에서 0.07(약 15개)로 낮췄다. 실사용자 보고 "먹 대포 너무 쎔" —
+ *    대포는 **밀릴 때 숨통을 틔우는 비상 수단**이지 주력이 아니어야 한다.
+ *    대신 상점에서 단계별로 키울 수 있게 했다(cannonLevel). 기본을 약하게, 키운 만큼 세게.
+ */
+export const CANNON_PER_CORRECT = 0.07;
 export const CANNON_KNOCKBACK = 90;       // 뒤로 밀어내는 거리(맵 길이 1000 기준)
 
+// ── 먹 대포 강화 ───────────────────────────────────────────────────────────
 /**
- * 그 판에서 대포 한 발이 주는 피해(성장 배율은 호출부에서 곱한다).
+ * 🔴 기본치를 낮추고 **강화 단계**를 새로 판다. 낮추기만 하면 "약해졌다"만 남고,
+ *    올리기만 하면 지금의 "너무 쎔"이 그대로다. 낮춘 자리를 먹물로 되사는 구조라야
+ *    "못 깨던 판을 키워서 깬다"는 재도전 루프의 손잡이가 하나 늘어난다.
+ * 최대 단계(5)에서 예전 위력(피해 0.05 · 성 0.03)을 조금 넘어선다 — 끝까지 키운 아이만.
+ */
+export const CANNON_MAX_LV = 5;
+
+/** 단계별 위력 배율 — 0단계는 예전의 60%, 5단계는 130% */
+export function cannonMult(level: number): number {
+  const lv = Math.max(0, Math.min(CANNON_MAX_LV, Math.floor(level)));
+  return 0.6 + 0.14 * lv;
+}
+
+/** 다음 단계 강화 비용(먹물) */
+export function cannonCost(level: number): number {
+  const lv = Math.max(0, Math.floor(level));
+  return lv >= CANNON_MAX_LV ? Infinity : Math.round(260 * Math.pow(1.45, lv) / 10) * 10;
+}
+
+/**
+ * 그 판에서 대포 한 발이 주는 피해(성장 배율·강화 배율은 호출부에서 곱한다).
  * 🔴 0.12 로 뒀더니 대포만으로 캠페인 로스터가 전설 로스터만큼 멀리 가서
  *    **소환이 무의미**해졌다(게이트 FAIL). 0.05 는 "밀릴 때 숨통을 틔우는" 수준이다.
  */
@@ -184,10 +235,9 @@ export function cannonDamage(enemyBudget: number): number {
 }
 
 /**
- * 대포 한 발이 **적 성**에 주는 피해 — 그 판 성 체력의 비율.
+ * 대포 한 발이 **적 성**에 주는 피해 — 그 판 성 체력의 비율(강화 배율은 호출부에서 곱한다).
  * 🔴 적에게만 피해를 주면, 전선이 적 성까지 밀고 올라가 화면에 적이 없는 동안
  *    누를 때마다 충전만 사라지고 아무 일도 안 일어난다(실측: 1판 28초 이후 적군 0마리).
- *    0.03 = 정답 12개로 한 발, 한 발이 성의 3%. 대포만으로 성을 깨려면 400문항이 필요하니
- *    "소환 무의미" 쪽으로 기울지 않는다.
+ *    대포만으로 성을 깨려면 수백 문항이 필요하니 "소환 무의미" 쪽으로 기울지 않는다.
  */
 export const CANNON_CASTLE_SHARE = 0.03;

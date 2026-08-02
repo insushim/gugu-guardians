@@ -28,10 +28,10 @@ describe('0단계 = 안전망 기준선', () => {
   });
 
   it('0단계 전투에는 돌파형도 광역도 등장하지 않는다', () => {
-    const b = new Battle(stageDef(12), {}, 0, 0);
+    const b = new Battle(stageDef(12), {}, { mana: 0 }, 0);
     for (let i = 0; i < 3000; i++) b.step(1 / 30);
     // 죽은 적도 있으므로 스폰된 전체를 보기 위해 이벤트가 아니라 살아있는 유닛 + 재실행으로 확인
-    const seen = new Battle(stageDef(12), {}, 0, 0);
+    const seen = new Battle(stageDef(12), {}, { mana: 0 }, 0);
     let sawEnemy = false;
     for (let i = 0; i < 900; i++) {
       seen.step(1 / 30);
@@ -97,14 +97,14 @@ describe('단계 표', () => {
     // 🔴 `Math.max(0, Math.min(N, Math.floor(NaN)))` 는 0 이 아니라 NaN 이다.
     //    Battle 이 자체 클램프를 쓰다 실제로 NaN 을 들고 있었다 — 결과 화면의
     //    `nextTier !== tier` 비교가 항상 참이 되어 안 바뀐 판에도 안내가 뜬다.
-    expect(new Battle(stageDef(1), {}, 0, Number.NaN).tier).toBe(0);
-    expect(new Battle(stageDef(1), {}, 0, -3).tier).toBe(0);
-    expect(new Battle(stageDef(1), {}, 0, 99).tier).toBe(MAX_TIER);
-    expect(new Battle(stageDef(1), {}, 0, 1.7).tier).toBe(1);
+    expect(new Battle(stageDef(1), {}, { mana: 0 }, Number.NaN).tier).toBe(0);
+    expect(new Battle(stageDef(1), {}, { mana: 0 }, -3).tier).toBe(0);
+    expect(new Battle(stageDef(1), {}, { mana: 0 }, 99).tier).toBe(MAX_TIER);
+    expect(new Battle(stageDef(1), {}, { mana: 0 }, 1.7).tier).toBe(1);
   });
 
   it('문제를 하나도 안 푼 판은 승격 근거가 되지 않는다', () => {
-    const b = new Battle(stageDef(1), {}, 0, 3);
+    const b = new Battle(stageDef(1), {}, { mana: 0 }, 3);
     expect(b.outcome.accuracy).toBe(0);
     expect(b.outcome.win).toBe(false);
     expect(nextTier(3, 1, b.outcome).tier).toBe(2);   // 이기지 못했으니 내려간다
@@ -112,7 +112,11 @@ describe('단계 표', () => {
 });
 
 describe('단계 조정 규칙 — 올릴 땐 천천히, 내릴 땐 즉시', () => {
-  const easy = { win: true, castleLeft: 1, accuracy: 0.9 };
+  // 🔴 '여유'와 '압도'는 다른 규칙을 탄다. 여유는 성이 조금 깎였거나 정답률이 90% 미만인
+  //    경우이고, 압도(성 무피격 + 정답 90%↑)는 한 판으로 두 칸 오른다.
+  //    예전엔 easy 를 `castleLeft: 1, accuracy: 0.9` 로 뒀는데 그건 지금 기준으로 **압도**다.
+  const easy = { win: true, castleLeft: 0.9, accuracy: 0.8 };
+  const dominant = { win: true, castleLeft: 1, accuracy: 0.95 };
   const narrow = { win: true, castleLeft: 0.4, accuracy: 0.9 };
   const loss = { win: false, castleLeft: 0, accuracy: 0.9 };
 
@@ -125,6 +129,14 @@ describe('단계 조정 규칙 — 올릴 땐 천천히, 내릴 땐 즉시', () 
     s = nextTier(s.tier, s.streak, easy);
     expect(s.tier).toBe(1);
     expect(s.streak).toBe(0);
+  });
+
+  it('압도(성 무피격 + 정답 90%↑)는 한 판으로 두 단계 오른다', () => {
+    expect(nextTier(0, 0, dominant)).toEqual({ tier: 2, streak: 0 });
+    // 성이 한 대라도 맞았으면 압도가 아니다 — 여유 규칙(연승 필요)으로 떨어진다
+    expect(nextTier(0, 0, { ...dominant, castleLeft: 0.99 })).toEqual({ tier: 0, streak: 1 });
+    // 정답률이 90% 미만이어도 압도가 아니다
+    expect(nextTier(0, 0, { ...dominant, accuracy: 0.89 })).toEqual({ tier: 0, streak: 1 });
   });
 
   it('한 판만 져도 바로 내려간다 (막힌 아이를 붙잡아 두지 않는다)', () => {
@@ -149,7 +161,7 @@ describe('단계 조정 규칙 — 올릴 땐 천천히, 내릴 땐 즉시', () 
 
 describe('돌파형·광역이 실제로 동작한다', () => {
   it('높은 단계에서는 돌파형이 등장한다', () => {
-    const b = new Battle(stageDef(12), {}, 0, MAX_TIER);
+    const b = new Battle(stageDef(12), {}, { mana: 0 }, MAX_TIER);
     let breakers = 0;
     const seen = new Set<number>();
     for (let i = 0; i < 900; i++) {
@@ -164,7 +176,7 @@ describe('돌파형·광역이 실제로 동작한다', () => {
   it('돌파형은 아군 전선을 **지나쳐** 우리 성 쪽으로 간다', () => {
     // 🔴 아군을 세우지 않으면 allyFront 가 -Infinity 라 '전선을 넘었다'를 **관측할 수 없다**.
     //    (처음에 이걸 빼먹어 테스트가 기능이 아니라 자기 설정을 재고 있었다.)
-    const b = new Battle(stageDef(12), {}, 6, MAX_TIER);
+    const b = new Battle(stageDef(12), {}, { mana: 6 }, MAX_TIER);
     let passed = false;
     for (let i = 0; i < 9000 && !passed; i++) {
       b.money = 99999;
@@ -182,7 +194,7 @@ describe('돌파형·광역이 실제로 동작한다', () => {
   });
 
   it('0단계에서는 어떤 적도 아군 전선을 넘지 못한다 (돌파형이 없으므로)', () => {
-    const b = new Battle(stageDef(12), {}, 6, 0);
+    const b = new Battle(stageDef(12), {}, { mana: 6 }, 0);
     let sawAlly = false;
     for (let i = 0; i < 9000; i++) {
       b.money = 99999;
@@ -200,7 +212,7 @@ describe('돌파형·광역이 실제로 동작한다', () => {
   });
 
   it('광역 공격은 한 번에 여러 아군을 때린다', () => {
-    const b = new Battle(stageDef(20), {}, 0, MAX_TIER);
+    const b = new Battle(stageDef(20), {}, { mana: 0 }, MAX_TIER);
     // 같은 자리에 아군 여럿을 세우고, 광역 적을 그 옆에 놓는다
     for (let i = 0; i < 4; i++) {
       b.units.push({
@@ -234,7 +246,7 @@ describe('돌파형·광역이 실제로 동작한다', () => {
     expect(fixedIds.length).toBeGreaterThan(0);                 // 고정형이 실제로 있는 판인지
     expect(tierBreakShare(MAX_TIER)).toBeGreaterThan(0.5);      // 1번 순번이 뽑히는 비율인지
 
-    const b = new Battle({ ...base, spawns }, {}, 6, MAX_TIER);
+    const b = new Battle({ ...base, spawns }, {}, { mana: 6 }, MAX_TIER);
     let sawFixed = 0;
     for (let i = 0; i < 9000; i++) {
       b.money = 99999;
@@ -267,11 +279,16 @@ describe('프로브 모델과 단계 표가 일치한다', () => {
     //    "안전망이 지켜진다"는 게이트의 결론 자체가 근거를 잃는다. 그래서 **출력**을 대조한다.
     expect(probe.EASY_STREAK_TO_RAISE).toBe(EASY_STREAK_TO_RAISE);
     let cases = 0;
+    // 🔴 격자에 **압도 임계(성 0.999 / 정답 0.9)** 주변 값을 반드시 넣는다.
+    //    그 값이 없으면 한쪽에만 압도 규칙이 있어도 전부 통과한다(규칙 갈라짐을 못 잡는다).
+    const CASTLE = [0, 0.5, 0.84, 0.85, 0.86, 0.998, 0.999, 1];
+    const ACC = [0, 0.5, 0.69, 0.7, 0.71, 0.89, 0.9, 1];
+    const TIERS = MAX_TIER + 3;   // -1 .. MAX_TIER+1
     for (let t = -1; t <= MAX_TIER + 1; t++) {
       for (const streak of [0, 1, 2]) {
         for (const win of [true, false]) {
-          for (const castleLeft of [0, 0.5, 0.84, 0.85, 0.86, 1]) {
-            for (const accuracy of [0, 0.5, 0.69, 0.7, 0.71, 1]) {
+          for (const castleLeft of CASTLE) {
+            for (const accuracy of ACC) {
               const m = { win, castleLeft, accuracy };
               expect(probe.nextTier(t, streak, m)).toEqual(nextTier(t, streak, m));
               cases++;
@@ -280,6 +297,6 @@ describe('프로브 모델과 단계 표가 일치한다', () => {
         }
       }
     }
-    expect(cases).toBe(11 * 3 * 2 * 6 * 6);   // 격자가 실제로 다 돌았는지
+    expect(cases).toBe(TIERS * 3 * 2 * CASTLE.length * ACC.length);   // 격자가 실제로 다 돌았는지
   });
 });

@@ -1,6 +1,7 @@
 {
-  "_comment": "🔴 유닛 수치의 단일 진실원. src/sim/units.ts 와 tools/balance-probe.mjs 가 이 파일 하나를 읽는다. v1에서는 두 곳에 값을 베껴 쓰고 테스트로 대조했는데, 24종으로 늘어나면 그 방식은 드리프트를 못 막는다.",
-  "version": 2,
+  "_comment": "🔴 유닛 수치의 단일 진실원. src/sim/units.ts 와 tools/probe-model.mjs 가 이 파일 하나를 읽는다. v1에서는 두 곳에 값을 베껴 쓰고 테스트로 대조했는데, 종류가 늘어나면 그 방식은 드리프트를 못 막는다.",
+  "_fields": "aoe=광역 반경(겹쳐 선 유닛을 함께 때린다) · skill=전설 전용 N타마다 특별기술 · armor=피해 감산(적 전용) · breaker=태생 돌파형(전선을 지나쳐 성으로) · split=쓰러질 때 갈라져 나오는 작은 개체",
+  "version": 3,
   "rarities": [
     {
       "id": "normal",
@@ -43,6 +44,14 @@
       "shardOnDup": 50
     }
   ],
+  "_slotsComment": "🔴 등급별 출전 자리 점유. 전장 상한(allyCap)은 이제 '마리 수'가 아니라 '자리 수'다. 전설이 한 자리만 먹으면 전설 16기를 쌓는 게 언제나 최적이 되어 덱 구성이 사라진다 — 강한 셈지기는 자리를 더 차지하고 재소환도 더 오래 걸린다.",
+  "slotsByRarity": {
+    "normal": 1,
+    "rare": 1,
+    "unique": 2,
+    "epic": 3,
+    "legend": 4
+  },
   "allies": [
     {
       "id": "jipsin",
@@ -87,6 +96,34 @@
       "role": "앞을 막는 방패"
     },
     {
+      "id": "dongjaseok",
+      "name": "동자석",
+      "rarity": "normal",
+      "cost": 70,
+      "hp": 470,
+      "atk": 16,
+      "aspd": 1.3,
+      "range": 40,
+      "spd": 40,
+      "cd": 4,
+      "unlock": 2,
+      "role": "돌로 만든 앞줄"
+    },
+    {
+      "id": "jorongbak",
+      "name": "조롱박이",
+      "rarity": "normal",
+      "cost": 60,
+      "hp": 320,
+      "atk": 22,
+      "aspd": 1,
+      "range": 40,
+      "spd": 56,
+      "cd": 2.6,
+      "unlock": 6,
+      "role": "통통 튀는 물량"
+    },
+    {
       "id": "onggi",
       "name": "옹기동이",
       "rarity": "normal",
@@ -127,6 +164,21 @@
       "cd": 5.5,
       "unlock": 11,
       "role": "값싼 원거리"
+    },
+    {
+      "id": "bitjaru",
+      "name": "빗자루동자",
+      "rarity": "normal",
+      "cost": 105,
+      "hp": 290,
+      "atk": 25,
+      "aspd": 1.2,
+      "range": 46,
+      "spd": 50,
+      "cd": 5,
+      "aoe": 58,
+      "unlock": 9,
+      "role": "한 번에 여럿 쓸기"
     },
     {
       "id": "bungbung",
@@ -171,6 +223,34 @@
       "role": "아주 빠른 연타"
     },
     {
+      "id": "chotbul",
+      "name": "촛불도령",
+      "rarity": "rare",
+      "cost": 180,
+      "hp": 270,
+      "atk": 62,
+      "aspd": 1.1,
+      "range": 48,
+      "spd": 54,
+      "cd": 7,
+      "unlock": 0,
+      "role": "가까이서 확 태운다"
+    },
+    {
+      "id": "dolhareubang",
+      "name": "돌하르방",
+      "rarity": "rare",
+      "cost": 200,
+      "hp": 1150,
+      "atk": 30,
+      "aspd": 1.6,
+      "range": 44,
+      "spd": 28,
+      "cd": 9,
+      "unlock": 14,
+      "role": "꿈쩍 않는 돌 할아버지"
+    },
+    {
       "id": "dokkabi",
       "name": "먹도깨비",
       "rarity": "rare",
@@ -199,6 +279,21 @@
       "role": "버티는 큰 방패"
     },
     {
+      "id": "mulbangul",
+      "name": "물방울각시",
+      "rarity": "rare",
+      "cost": 235,
+      "hp": 250,
+      "atk": 48,
+      "aspd": 1.5,
+      "range": 170,
+      "spd": 40,
+      "cd": 9,
+      "aoe": 70,
+      "unlock": 26,
+      "role": "멀리서 물벼락"
+    },
+    {
       "id": "chorong",
       "name": "청사초롱",
       "rarity": "rare",
@@ -213,18 +308,19 @@
       "role": "멀리서 꾸준히"
     },
     {
-      "id": "haetae",
-      "name": "해태장군",
-      "rarity": "unique",
-      "cost": 340,
-      "hp": 1500,
-      "atk": 95,
-      "aspd": 1.8,
-      "range": 55,
-      "spd": 32,
-      "cd": 14,
-      "unlock": 9,
-      "role": "단단한 중장갑"
+      "id": "kkwaenggwari",
+      "name": "꽹과리쟁이",
+      "rarity": "rare",
+      "cost": 250,
+      "hp": 330,
+      "atk": 58,
+      "aspd": 1.4,
+      "range": 125,
+      "spd": 44,
+      "cd": 9,
+      "aoe": 92,
+      "unlock": 20,
+      "role": "소리로 넓게 친다"
     },
     {
       "id": "butdaegam",
@@ -236,7 +332,7 @@
       "aspd": 1.4,
       "range": 230,
       "spd": 40,
-      "cd": 10,
+      "cd": 12,
       "unlock": 18,
       "role": "가장 멀리 쏜다"
     },
@@ -250,9 +346,51 @@
       "aspd": 0.6,
       "range": 55,
       "spd": 88,
-      "cd": 11,
+      "cd": 13,
       "unlock": 0,
       "role": "번개같이 빠른 연타"
+    },
+    {
+      "id": "talchum",
+      "name": "탈춤이",
+      "rarity": "unique",
+      "cost": 330,
+      "hp": 480,
+      "atk": 120,
+      "aspd": 0.9,
+      "range": 50,
+      "spd": 92,
+      "cd": 14,
+      "unlock": 0,
+      "role": "바람처럼 파고든다"
+    },
+    {
+      "id": "haetae",
+      "name": "해태장군",
+      "rarity": "unique",
+      "cost": 340,
+      "hp": 1500,
+      "atk": 95,
+      "aspd": 1.8,
+      "range": 55,
+      "spd": 32,
+      "cd": 16,
+      "unlock": 9,
+      "role": "단단한 중장갑"
+    },
+    {
+      "id": "bulgasari",
+      "name": "불가사리",
+      "rarity": "unique",
+      "cost": 360,
+      "hp": 1600,
+      "atk": 105,
+      "aspd": 1.7,
+      "range": 56,
+      "spd": 36,
+      "cd": 17,
+      "unlock": 0,
+      "role": "쇠를 먹고 자란다"
     },
     {
       "id": "baekho",
@@ -264,9 +402,24 @@
       "aspd": 1.6,
       "range": 58,
       "spd": 58,
-      "cd": 14,
+      "cd": 16,
       "unlock": 0,
       "role": "튼튼하고 강한 돌격"
+    },
+    {
+      "id": "seonnyeo",
+      "name": "선녀",
+      "rarity": "unique",
+      "cost": 400,
+      "hp": 460,
+      "atk": 96,
+      "aspd": 1.4,
+      "range": 220,
+      "spd": 42,
+      "cd": 17,
+      "aoe": 85,
+      "unlock": 0,
+      "role": "하늘에서 꽃비를 뿌린다"
     },
     {
       "id": "cheongryong",
@@ -278,7 +431,7 @@
       "aspd": 1.5,
       "range": 250,
       "spd": 40,
-      "cd": 15,
+      "cd": 18,
       "unlock": 0,
       "role": "최장거리 강타"
     },
@@ -292,23 +445,10 @@
       "aspd": 2.2,
       "range": 60,
       "spd": 26,
-      "cd": 22,
+      "cd": 26,
+      "aoe": 62,
       "unlock": 25,
       "role": "거대한 벽"
-    },
-    {
-      "id": "hyeonmu",
-      "name": "현무",
-      "rarity": "epic",
-      "cost": 560,
-      "hp": 3600,
-      "atk": 120,
-      "aspd": 2,
-      "range": 58,
-      "spd": 22,
-      "cd": 24,
-      "unlock": 0,
-      "role": "무너지지 않는 등껍질"
     },
     {
       "id": "dokkabidae",
@@ -320,9 +460,38 @@
       "aspd": 2.1,
       "range": 65,
       "spd": 60,
-      "cd": 20,
+      "cd": 24,
       "unlock": 0,
       "role": "한 방으로 부순다"
+    },
+    {
+      "id": "hyeonmu",
+      "name": "현무",
+      "rarity": "epic",
+      "cost": 560,
+      "hp": 3600,
+      "atk": 120,
+      "aspd": 2,
+      "range": 58,
+      "spd": 22,
+      "cd": 28,
+      "unlock": 0,
+      "role": "무너지지 않는 등껍질"
+    },
+    {
+      "id": "bulgae",
+      "name": "불개",
+      "rarity": "epic",
+      "cost": 580,
+      "hp": 1500,
+      "atk": 250,
+      "aspd": 1.8,
+      "range": 70,
+      "spd": 66,
+      "cd": 25,
+      "aoe": 95,
+      "unlock": 0,
+      "role": "불을 물고 달린다"
     },
     {
       "id": "jujak",
@@ -334,9 +503,25 @@
       "aspd": 1.7,
       "range": 200,
       "spd": 48,
-      "cd": 22,
+      "cd": 26,
+      "aoe": 90,
       "unlock": 0,
       "role": "불을 뿜는 원거리"
+    },
+    {
+      "id": "eosa",
+      "name": "암행어사",
+      "rarity": "epic",
+      "cost": 620,
+      "hp": 1300,
+      "atk": 210,
+      "aspd": 1.6,
+      "range": 200,
+      "spd": 46,
+      "cd": 26,
+      "aoe": 88,
+      "unlock": 0,
+      "role": "마패 한 번에 우르르"
     },
     {
       "id": "gumiho",
@@ -348,9 +533,15 @@
       "aspd": 0.5,
       "range": 60,
       "spd": 78,
-      "cd": 26,
+      "cd": 34,
       "unlock": 0,
-      "role": "눈 깜짝할 새 아홉 번"
+      "role": "눈 깜짝할 새 아홉 번",
+      "skill": {
+        "name": "아홉꼬리 회오리",
+        "every": 9,
+        "mult": 2.6,
+        "aoe": 130
+      }
     },
     {
       "id": "sansin",
@@ -362,9 +553,55 @@
       "aspd": 1.6,
       "range": 240,
       "spd": 36,
-      "cd": 28,
+      "cd": 36,
       "unlock": 0,
-      "role": "산 너머까지 닿는다"
+      "role": "산 너머까지 닿는다",
+      "skill": {
+        "name": "산울림",
+        "every": 5,
+        "mult": 3,
+        "aoe": 170
+      }
+    },
+    {
+      "id": "cheollima",
+      "name": "천리마",
+      "rarity": "legend",
+      "cost": 820,
+      "hp": 2200,
+      "atk": 260,
+      "aspd": 0.7,
+      "range": 62,
+      "spd": 110,
+      "cd": 38,
+      "unlock": 0,
+      "role": "하루에 천 리를 달린다",
+      "skill": {
+        "name": "천리 질주",
+        "every": 7,
+        "mult": 3.2,
+        "aoe": 120
+      }
+    },
+    {
+      "id": "seondol",
+      "name": "선돌장군",
+      "rarity": "legend",
+      "cost": 860,
+      "hp": 4200,
+      "atk": 300,
+      "aspd": 2,
+      "range": 80,
+      "spd": 24,
+      "cd": 42,
+      "unlock": 0,
+      "role": "산처럼 버티고 산처럼 친다",
+      "skill": {
+        "name": "돌바람",
+        "every": 4,
+        "mult": 2.4,
+        "aoe": 200
+      }
     },
     {
       "id": "yongwang",
@@ -376,9 +613,16 @@
       "aspd": 1.9,
       "range": 90,
       "spd": 44,
-      "cd": 32,
+      "cd": 44,
+      "aoe": 60,
       "unlock": 0,
-      "role": "바다를 다스리는 힘"
+      "role": "바다를 다스리는 힘",
+      "skill": {
+        "name": "용오름",
+        "every": 4,
+        "mult": 2.6,
+        "aoe": 180
+      }
     }
   ],
   "enemies": [
@@ -413,6 +657,16 @@
       "role": "빠름"
     },
     {
+      "id": "e_splitlet",
+      "name": "꼬마갈래",
+      "hp": 90,
+      "atk": 22,
+      "aspd": 0.9,
+      "range": 36,
+      "spd": 62,
+      "role": "갈라져 나온 작은 벌레"
+    },
+    {
       "id": "e_arch",
       "name": "삐뚤활잡이",
       "hp": 240,
@@ -433,6 +687,17 @@
       "role": "기본"
     },
     {
+      "id": "e_dash",
+      "name": "번개셈귀",
+      "hp": 170,
+      "atk": 30,
+      "aspd": 1.1,
+      "range": 38,
+      "spd": 96,
+      "breaker": true,
+      "role": "전선을 지나쳐 달린다"
+    },
+    {
       "id": "e_minus",
       "name": "빼기까마귀",
       "hp": 300,
@@ -443,6 +708,42 @@
       "role": "먼 거리 저격"
     },
     {
+      "id": "e_split",
+      "name": "갈래벌레",
+      "hp": 300,
+      "atk": 34,
+      "aspd": 1.1,
+      "range": 42,
+      "spd": 46,
+      "split": {
+        "id": "e_splitlet",
+        "n": 2
+      },
+      "role": "쓰러지면 둘로 갈라진다"
+    },
+    {
+      "_note": "🔴 사거리가 긴 적은 **같은 체력으로 훨씬 세다.** 근접 아군이 닿지 못하는 자리에 서서 전선을 계속 갉는다. 사거리240·공격62로 뒀을 때 이 한 마리가 정답60% 아이의 ST29 승률을 24%p, 정답40% 아이의 ST18 승률을 33%p 먹었다(실측: 빼면 29%→62%). 사거리는 그 시점 아이가 가진 원거리 셈지기(붕붕이 190)가 **닿는 선 아래**로 둔다.",
+      "id": "e_sky",
+      "name": "하늘연",
+      "hp": 300,
+      "atk": 38,
+      "aspd": 1.9,
+      "range": 180,
+      "spd": 52,
+      "role": "높이 떠서 멀리 쏜다"
+    },
+    {
+      "id": "e_drum",
+      "name": "북치기괴수",
+      "hp": 460,
+      "atk": 40,
+      "aspd": 1.8,
+      "range": 150,
+      "spd": 34,
+      "aoe": 60,
+      "role": "북소리가 넓게 퍼진다"
+    },
+    {
       "id": "e_knot",
       "name": "매듭뱀",
       "hp": 520,
@@ -451,6 +752,41 @@
       "range": 46,
       "spd": 48,
       "role": "질긴 중간"
+    },
+    {
+      "_note": "🔴 광역도 사거리와 같은 이유로 위험하다 — 물량으로 버티는 아이(정답 40%대)는 뭉쳐 세우는 것 말고 쓸 수 있는 수가 없어서 광역에 통째로 당한다. 반경 82·11판 등장으로 뒀을 때 정답40% 아이의 ST12 승률을 38%p 먹었다(29%→67%). 반경을 줄이고 등장을 늦춘다.",
+      "id": "e_ghost",
+      "name": "먹구름떼",
+      "hp": 480,
+      "atk": 34,
+      "aspd": 1.8,
+      "range": 60,
+      "spd": 26,
+      "aoe": 64,
+      "role": "뭉친 곳을 통째로 친다"
+    },
+    {
+      "_note": "armor 는 stage.mult 로 함께 커진다(core.ts) — 안 그러면 후반에 장식이 된다. 그래서 기본값은 작아야 한다. 26 으로 뒀을 때 정답60% 아이의 후반 승률이 무너졌다.",
+      "id": "e_armor",
+      "name": "무쇠엉킴",
+      "hp": 620,
+      "atk": 60,
+      "aspd": 1.9,
+      "range": 46,
+      "spd": 24,
+      "armor": 8,
+      "role": "약한 공격은 튕겨 낸다"
+    },
+    {
+      "id": "e_thorn",
+      "name": "가시덤불",
+      "hp": 720,
+      "atk": 44,
+      "aspd": 1.7,
+      "range": 50,
+      "spd": 20,
+      "aoe": 70,
+      "role": "가시가 사방으로"
     },
     {
       "id": "e_rock",
@@ -501,9 +837,20 @@
       "range": 100,
       "spd": 0,
       "role": "고정 수문장"
+    },
+    {
+      "id": "e_boss4",
+      "name": "셈먹는용",
+      "hp": 7600,
+      "atk": 105,
+      "aspd": 1.8,
+      "range": 105,
+      "spd": 0,
+      "aoe": 90,
+      "role": "고정 수문장 · 광역"
     }
   ],
   "levelGain": 0.08,
   "deckSize": 6,
-  "allyCap": 16
+  "allyCap": 18
 }

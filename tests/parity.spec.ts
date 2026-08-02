@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { ALLIES, ENEMIES, DECK_SIZE, ALLY_CAP, defaultDeck, progressionAllies, RARITIES } from '../src/sim/units';
 import { stageDef, allyGrowth, enemyMult, enemyBudget, quizTypesFor, MAX_SEC, MAP_LEN, CAMPAIGN_STAGES } from '../src/sim/stages';
 import { REWARD, START_MONEY, baseRegen, comboMul, rewardBase, DDA_MAX, DDA_REWARD_PENALTY, DDA_WRONG_TRIGGER } from '../src/sim/economy';
@@ -150,5 +151,29 @@ describe('덱 규칙', () => {
     for (const u of ALLIES.filter((x) => x.unlock === 0)) {
       expect(free.has(u.id), `${u.name} 이 진도로 열린다`).toBe(false);
     }
+  });
+});
+
+/**
+ * 타입 게이트가 **미러 파일이 사는 곳까지** 덮는지.
+ *
+ * 🔴 `tools/` 가 `tsconfig.include` 에 없던 시절, `tools/enemy-visibility-probe.ts` 가
+ *    `Battle` 생성자 시그니처 변경(`manaLevel: number` → `upgrades` 객체)을 따라가지 못한 채
+ *    **타입 오류를 안고 조용히 남아 있었다**(교차검증 적발). `npm run build` 도 `npm run check` 도
+ *    그 파일을 아예 안 봤기 때문이다. 런타임에서는 `(0).mana` 가 undefined 라 `?? 0` 으로
+ *    우연히 무해했지만, 그건 다음번에도 운이 좋다는 뜻이 아니다.
+ *    하네스도 코드다 — 게이트 밖에 두지 않는다.
+ *
+ * (이 설명을 tsconfig.json 주석으로 넣었다가 되돌렸다. 그 파일은 순수 JSON 이라
+ *  블록 주석을 넣는 순간 Tier-0 게이트의 JSON 구문 검사가 깨진다 — 실측.)
+ */
+describe('타입 게이트 범위', () => {
+  it('tsconfig 가 tools 를 포함한다 — 하네스도 타입 검사를 받는다', () => {
+    const raw = readFileSync(new URL('../tsconfig.json', import.meta.url).pathname, 'utf8');
+    const cfg = JSON.parse(raw) as { include: string[] };
+    expect(cfg.include, 'tools 가 빠지면 하네스의 시그니처 드리프트를 아무도 못 잡는다')
+      .toContain('tools');
+    // tsconfig 는 주석 없는 **순수 JSON** 이어야 한다(게이트가 JSON.parse 로 검사한다)
+    expect(() => JSON.parse(raw)).not.toThrow();
   });
 });

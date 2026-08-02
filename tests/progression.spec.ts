@@ -6,6 +6,7 @@ import { ALLIES } from '../src/sim/units';
 import {
   manaCap, manaCapCost, MANA_CAP_BASE, MANA_CAP_MAX_LV,
   hasteOf, HASTE_MAX, HASTE_PER_CORRECT, HASTE_DECAY,
+  CANNON_PER_CORRECT,
 } from '../src/sim/economy';
 
 describe('셈력 그릇(상한)', () => {
@@ -50,8 +51,8 @@ describe('셈력 그릇(상한)', () => {
   });
 
   it('그릇 단계를 올리면 전투가 더 담는다', () => {
-    const lo = new Battle(stageDef(1), {}, 0);
-    const hi = new Battle(stageDef(1), {}, 3);
+    const lo = new Battle(stageDef(1), {}, { mana: 0 });
+    const hi = new Battle(stageDef(1), {}, { mana: 3 });
     expect(hi.manaMax).toBeGreaterThan(lo.manaMax);
     for (let i = 0; i < 80; i++) { lo.answer(true, 1200); hi.answer(true, 1200); }
     expect(hi.money).toBeGreaterThan(lo.money);
@@ -128,6 +129,14 @@ describe('먹 대포', () => {
     return b;
   }
 
+  /** 🔴 필요한 정답 수를 **상수에서 뽑는다.** 12 를 손으로 적어 뒀더니 충전량을
+   *  0.09→0.07 로 낮춘 순간 대포 테스트 두 개가 "충전이 안 된다"로 죽었다 —
+   *  고장이 아니라 테스트가 상수를 베껴 쓰고 있었던 것이다. */
+  const SHOTS_NEEDED = Math.ceil(1 / CANNON_PER_CORRECT);
+  function chargeCannon(b: Battle): void {
+    for (let i = 0; i < SHOTS_NEEDED; i++) b.answer(true, 1200);
+  }
+
   it('처음엔 못 쏜다', () => {
     expect(new Battle(stageDef(1)).cannonReady).toBe(false);
     expect(new Battle(stageDef(1)).fireCannon()).toBe(false);
@@ -150,7 +159,7 @@ describe('먹 대포', () => {
 
   it('정답을 충분히 맞히면 쏠 수 있고, 쏘면 충전이 비워진다', () => {
     const b = withEnemies();
-    for (let i = 0; i < 12; i++) b.answer(true, 1200);
+    chargeCannon(b);
     expect(b.cannonReady).toBe(true);
     expect(b.fireCannon()).toBe(true);
     expect(b.cannonCharge).toBe(0);
@@ -159,7 +168,7 @@ describe('먹 대포', () => {
 
   it('적을 실제로 깎고 뒤로 민다', () => {
     const b = withEnemies();
-    for (let i = 0; i < 12; i++) b.answer(true, 1200);
+    chargeCannon(b);
     const before = b.units.filter((u) => u.side === -1 && u.hp > 0)
       .map((u) => ({ uid: u.uid, hp: u.hp, x: u.x, spd: u.spd }));
     expect(before.length).toBeGreaterThan(0);
@@ -175,7 +184,7 @@ describe('먹 대포', () => {
   /** 저학년 게임에서 "내 편이 다치는 버튼"은 이해 비용이 크다 */
   it('아군은 건드리지 않는다', () => {
     const b = withEnemies();
-    for (let i = 0; i < 12; i++) b.answer(true, 1200);
+    chargeCannon(b);
     b.summon('jipsin');
     const allies = b.units.filter((u) => u.side === 1).map((u) => ({ uid: u.uid, hp: u.hp, x: u.x }));
     b.fireCannon();

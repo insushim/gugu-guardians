@@ -141,6 +141,7 @@ export class FieldRenderer {
   /** 검수 하네스가 읽는다 — 화면을 눈으로 세는 대신 숫자로 확인하려고 둔다 */
   shotsFired = 0;
   sweeps = 0;
+  skills = 0;
 
   shot(from: number, to: number, side: 1 | -1): void {
     if (this.opts.reduceMotion) return;
@@ -163,6 +164,26 @@ export class FieldRenderer {
     if (this.opts.reduceMotion) return;
     this.sweepAt = performance.now();
     this.sweeps++;
+  }
+
+  /**
+   * 전설 셈지기의 특별기술 — 터진 자리에 파동과 기술 이름이 잠깐 뜬다.
+   * 🔴 기술이 **일어났다는 사실이 화면에 없으면 없는 기능이다.** 시뮬은 그냥 피해를 몇 배로
+   *    줄 뿐이라, 연출이 없으면 아이 눈에는 "가끔 적이 갑자기 많이 죽네" 정도로만 보인다.
+   *    가장 귀한 셈지기를 뽑은 보상이 그렇게 묻히면 안 된다.
+   */
+  private bursts: { x: number; r: number; name: string; side: 1 | -1; at: number; still: boolean }[] = [];
+  private static readonly BURST_MS = 760;
+
+  /**
+   * 🔴 동작 줄이기(reduceMotion)에서도 **없애지 않는다.** 퍼지는 파동만 끄고 이름은 남긴다 —
+   *    소리까지 끈 아이는 기술이 났다는 걸 알 방법이 아예 없어진다(교차검증 지적).
+   *    접근성 설정은 "정보를 줄이는" 게 아니라 "움직임을 줄이는" 것이다.
+   */
+  skill(x: number, r: number, name: string, side: 1 | -1): void {
+    if (this.bursts.length >= 6) this.bursts.shift();
+    this.bursts.push({ x, r, name, side, at: performance.now(), still: this.opts.reduceMotion });
+    this.skills++;
   }
 
   private castleSize(): { w: number; h: number } { return castleSize(this.w, this.h); }
@@ -209,7 +230,53 @@ export class FieldRenderer {
     this.drawShots(groundY, now);
     this.drawPuffs(groundY, now);
     this.drawSweep(groundY, now);
+    // 특별기술은 맨 위 — 이 게임에서 가장 귀한 순간이라 무엇에도 가리지 않는다
+    this.drawBursts(groundY, now);
     ctx.restore();
+  }
+
+  /** 특별기술 — 반경만큼 퍼지는 먹 파동 + 기술 이름 */
+  private drawBursts(groundY: number, now: number): void {
+    if (!this.bursts.length) return;
+    const { ctx } = this;
+    const scale = (this.w - this.pad() * 2) / MAP_LEN;   // 월드 → 화면 배율
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const s = this.bursts[i]!;
+      const k = (now - s.at) / FieldRenderer.BURST_MS;
+      if (k >= 1) { this.bursts.splice(i, 1); continue; }
+      const cx = this.sx(s.x);
+      const cy = groundY - 26;
+      // 반경은 실제 광역 반경을 따라간다 — 눈에 보이는 크기와 실제 효과 범위가 같아야
+      // 아이가 "저기까지 닿는구나"를 배울 수 있다
+      const rMax = Math.max(24, s.r * scale);
+      // 동작 줄이기: 고리를 퍼뜨리지 않고 고정 크기로, 글자도 떠오르지 않게 둔다
+      const r = s.still ? rMax * 0.8 : rMax * (0.25 + 0.75 * k);
+      const fade = s.still ? (k < 0.75 ? 1 : (1 - k) * 4) : 1 - k;
+
+      ctx.save();
+      ctx.globalAlpha = 0.55 * fade;
+      ctx.strokeStyle = s.side === 1 ? '#f4d03f' : '#d4342f';
+      ctx.lineWidth = 6 * fade + 1;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, r, r * 0.42, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.globalAlpha = 0.22 * fade;
+      ctx.fillStyle = s.side === 1 ? 'rgba(244,208,63,1)' : 'rgba(212,52,47,1)';
+      ctx.fill();
+
+      // 기술 이름 — 위로 살짝 떠오른다
+      ctx.globalAlpha = Math.min(1, fade * 1.8);
+      ctx.font = '900 15px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(20,16,14,0.9)';
+      ctx.fillStyle = s.side === 1 ? '#ffe98a' : '#ffc9c6';
+      const ty = cy - rMax * 0.5 - 10 - (s.still ? 0 : k * 16);
+      ctx.strokeText(s.name, cx, ty);
+      ctx.fillText(s.name, cx, ty);
+      ctx.restore();
+    }
   }
 
   /** 날아가는 먹덩이 — 출발점에서 목표까지 짧게 호를 그린다 */

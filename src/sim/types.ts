@@ -22,6 +22,21 @@ export interface RarityDef {
   shardOnDup: number;
 }
 
+/**
+ * 전설 셈지기의 특별기술 — **N번째 공격마다** 터진다.
+ * 🔴 확률로 두지 않는다. 시뮬은 결정론이어야 프로브·parity 테스트가 성립하고,
+ *    아이 입장에서도 "몇 대 때리면 나온다"가 눈에 보이는 편이 낫다(운이 아니라 리듬).
+ */
+export interface UnitSkill {
+  name: string;
+  /** 몇 번째 공격마다 터지는가(≥2) */
+  every: number;
+  /** 그때 공격력 배율 */
+  mult: number;
+  /** 그때 광역 반경 */
+  aoe: number;
+}
+
 export interface UnitDef {
   id: string;
   name: string;
@@ -41,6 +56,10 @@ export interface UnitDef {
   unlock: number;
   /** 한 줄 설명(도감·덱 UI) */
   role: string;
+  /** 평타 광역 반경(월드 단위). 없으면 단일 대상 */
+  aoe?: number;
+  /** 전설 전용 특별기술 */
+  skill?: UnitSkill;
 }
 
 export interface EnemyDef {
@@ -53,6 +72,14 @@ export interface EnemyDef {
   /** 0 이면 고정형(수문장) */
   spd: number;
   role: string;
+  /** 평타 광역 반경 — 뭉쳐 선 아군을 통째로 때린다 */
+  aoe?: number;
+  /** 피해 감산(고정값). 약한 물량이 통하지 않게 하는 장치 */
+  armor?: number;
+  /** 태생 돌파형 — 단계와 무관하게 전선을 지나쳐 성으로 간다 */
+  breaker?: boolean;
+  /** 쓰러질 때 갈라져 나오는 새끼 */
+  split?: { id: string; n: number };
 }
 
 export interface SpawnEntry {
@@ -118,6 +145,18 @@ export interface LiveUnit {
   breaker?: boolean;
   /** 광역 공격 반경(월드 단위). 0/undefined 면 단일 대상 */
   aoe?: number;
+  /** 피해 감산(적 전용). 최소 피해는 strike() 가 보장한다 */
+  armor?: number;
+  /** 지금까지 때린 횟수 — 전설 특별기술의 주기를 세는 데 쓴다 */
+  hits?: number;
+  /** 전설 특별기술(해석된 사본) */
+  skill?: UnitSkill;
+  /** 렌더 전용: 마지막 특별기술 시각 */
+  skillAt?: number;
+  /** 쓰러질 때 갈라져 나오는 새끼(적 전용) */
+  split?: { id: string; n: number };
+  /** 전장에서 차지하는 자리 수(아군 전용, 기본 1) */
+  slots?: number;
 }
 
 export type BattleStatus = 'playing' | 'win' | 'lose' | 'draw';

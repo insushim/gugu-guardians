@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST, assetUrl } from '../src/render/assets';
+import { ALLIES, ENEMIES } from '../src/sim/units';
+import { stageBackground } from '../src/sim/stages';
 
 /**
  * 에셋 매니페스트 정합성.
@@ -35,6 +37,30 @@ describe('에셋 매니페스트', () => {
   it('코드에서 직접 부르는 에셋 키가 매니페스트에 있다', () => {
     for (const key of ['crest_haetae', 'castle_ally', 'castle_foe']) {
       expect(assetUrl(key), `${key} 가 매니페스트에 없다`).not.toBe('');
+    }
+  });
+
+  /**
+   * 🔴 **로스터에 유닛을 추가하고 그림을 빠뜨리는 것**을 막는다.
+   *    v3 에서 셈지기 14종·엉킴괴수 9종을 한 번에 늘렸는데, 이 검사가 없으면
+   *    덱 카드의 `<img src="">` 가 페이지 자신을 가리키고(빈 칸) 전장에서는 도형으로
+   *    떨어질 뿐 **에러도 테스트 실패도 없다** — 실제로 배포될 때까지 아무도 모른다.
+   *    로스터가 진실원이므로 로스터를 기준으로 대조한다.
+   */
+  it('로스터의 모든 셈지기·엉킴괴수에 그림이 있다', () => {
+    const missing = [
+      ...ALLIES.map((u) => [u.id, u.name] as const),
+      ...ENEMIES.map((e) => [e.id, e.name] as const),
+    ].filter(([id]) => assetUrl(id) === '');
+    expect(missing.map(([id, name]) => `${id}(${name})`)).toEqual([]);
+  });
+
+  it('배경 키가 전부 매니페스트에 있다', () => {
+    const keys = new Set(MANIFEST.assets.map((a) => a.key));
+    // 스테이지는 무한이지만 배경은 구역 수만큼 순환한다 — 한 바퀴 돌면 전부 나온다
+    for (let i = 1; i <= 60; i++) {
+      const bg = stageBackground(i);
+      expect(keys.has(bg), `${bg} (ST${i}) 가 매니페스트에 없다`).toBe(true);
     }
   });
 

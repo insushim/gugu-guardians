@@ -1,19 +1,19 @@
 import type { QType } from '../edu/curriculum';
 import { ALL_TYPE_IDS } from '../edu/curriculum';
-import { ALLIES, ALLY_BY_ID, maxLevel, progressionAllies } from '../sim/units';
+import { ALLIES, ALLY_BY_ID, DECK_SIZE, maxLevel, progressionAllies } from '../sim/units';
 import { PITY_LEGEND } from '../meta/summon';
 import { EASY_STREAK_TO_RAISE, MAX_TIER } from '../sim/tier';
 import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
 import { today } from '../edu/date';
-import { MANA_CAP_MAX_LV } from '../sim/economy';
+import { CANNON_MAX_LV, MANA_CAP_MAX_LV, REGEN_MAX_LV } from '../sim/economy';
 // 🔴 순위 서버와 **같은 파일**을 본다. 양쪽에 복붙하면 한쪽만 고쳤을 때
 //    특정 별명을 뽑은 아이의 제출만 조용히 거절된다(테스트가 길이 일치를 강제한다).
 import { UUID_RE, MAX as BOARD_MAX } from '../../shared/board-contract';
 
 export const SAVE_KEY = 'gugu:save';
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 /** 스테이지가 무한이라 상한이 없다 — 다만 손상 세이브가 무한 루프를 만들지 않도록 선은 둔다 */
 export const MAX_STAGE_KEY = 9999;
@@ -32,8 +32,11 @@ export interface SaveData {
   summon: { sinceLegend: number; total: number };
   codex: { unlocked: string[] };
   currency: { meokmul: number; recovered: number };
-  /** 먹물로 산 영구 강화. 전투 밖에서만 바뀌고 전투는 읽기만 한다 */
-  upgrades: { mana: number };
+  /**
+   * 먹물로 산 영구 강화. 전투 밖에서만 바뀌고 전투는 읽기만 한다.
+   * mana=그릇(용량) · regen=샘(회복 속도) · cannon=먹 대포 위력.
+   */
+  upgrades: { mana: number; regen: number; cannon: number };
   /**
    * 적응형 전투 난이도. 판이 끝날 때마다 결과로 조정된다(src/sim/tier.ts).
    * 🔴 **0 = 게이트가 검사하는 밸런스 그대로.** 어려워하는 아이는 0을 벗어나지 않으므로
@@ -99,7 +102,7 @@ export function defaultSave(): SaveData {
     summon: { sinceLegend: 0, total: 0 },
     codex: { unlocked: [...STARTER_UNITS] },
     currency: { meokmul: 0, recovered: 0 },
-    upgrades: { mana: 0 },
+    upgrades: { mana: 0, regen: 0, cannon: 0 },
     challenge: { tier: 0, streak: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
     settings: { sound: true, music: true, fontScale: 1, reduceMotion: false },
@@ -226,9 +229,11 @@ export function normalize(input: unknown): SaveData {
       maxStage: Math.max(clearedMax, Math.floor(num(progress['maxStage'], 0, 0, MAX_STAGE_KEY))),
     },
     // 🔴 덱은 **보유한 유닛만** 남긴다. 없는 id가 남아 있으면 출전 화면이 빈 칸을 그린다.
+    // 🔴 길이는 `DECK_SIZE` 를 봐야 한다. 5 를 손으로 적어 뒀더니 출전 슬롯을 6장으로
+    //    늘린 뒤에도 저장을 다시 읽는 순간 6번째 칸이 조용히 사라졌다(고른 셈지기가 없어진다).
     deck: arr(d['deck'], (x) => (typeof x === 'string' ? x : null))
       .filter((id) => roster[id])
-      .slice(0, 5),
+      .slice(0, DECK_SIZE),
     roster,
     summon: {
       sinceLegend: Math.floor(num(summon['sinceLegend'], 0, 0, PITY_LEGEND)),
@@ -250,6 +255,8 @@ export function normalize(input: unknown): SaveData {
     },
     upgrades: {
       mana: Math.floor(num(upgrades['mana'], 0, 0, MANA_CAP_MAX_LV)),
+      regen: Math.floor(num(upgrades['regen'], 0, 0, REGEN_MAX_LV)),
+      cannon: Math.floor(num(upgrades['cannon'], 0, 0, CANNON_MAX_LV)),
     },
     edu: {
       theta,
@@ -306,6 +313,9 @@ export function normalize(input: unknown): SaveData {
  *  - v4 는 `challenge.tier`(적응형 전투 난이도)를 더한다. **없으면 0** — 이미 하던 아이는
  *    지금까지와 똑같은 난이도에서 시작해, 여유롭게 두 판 이기면 그때부터 올라간다.
  *    (기존 저장을 갑자기 어렵게 만들지 않는다.)
+ *  - v5 는 `upgrades.regen`(셈력 샘)·`upgrades.cannon`(먹 대포)을 더한다. **둘 다 없으면 0** —
+ *    기존 아이는 강화 0단계에서 시작한다. 대포 기본 위력을 낮췄으므로 이미 하던 아이는
+ *    대포가 약해진 것을 체감하는데, 모아 둔 먹물로 바로 되살 수 있다(상점).
  *  - 클리어 기록·먹물·SRS·통계·θ 시계열은 그대로 보존된다.
  *
  * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v3"를 만든다.

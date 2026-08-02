@@ -1,7 +1,7 @@
 import { nextTier } from '../sim/tier';
 import { Battle } from '../sim/core';
-import { stageDef, stageBackground, MAX_SEC } from '../sim/stages';
-import { ALLY_BY_ID, ALLY_CAP } from '../sim/units';
+import { stageDef, stageBackground, MAP_LEN, MAX_SEC } from '../sim/stages';
+import { ALLY_BY_ID, ALLY_CAP, slotsOf } from '../sim/units';
 import { rarityColor } from './rarity';
 import { comboMul, hasteLabel, MIN_ANSWER_MS } from '../sim/economy';
 import { FieldRenderer } from '../render/field';
@@ -46,7 +46,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   // 승급 레벨을 그대로 넘긴다 — 도감에서 키운 셈지기가 전장에서도 세져야 한다
   const levels: Record<string, number> = {};
   for (const [id, e] of Object.entries(save.roster)) levels[id] = e.level;
-  const battle = new Battle(stage, levels, save.upgrades.mana, save.challenge.tier);
+  const battle = new Battle(stage, levels, save.upgrades, save.challenge.tier);
   const quiz = new QuizSession({ layer: 'L1', types: stage.quizTypes, save, seed: Date.now() % 100000 });
 
   // ── DOM ────────────────────────────────────────────────────────────────
@@ -54,13 +54,15 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   const manaText = el('b', { class: 'mana' }, '0');
   const comboText = el('b', { class: 'combo' }, '');
   const speedText = el('b', { class: 'spd' }, '');
+  // 전장 자리 — 센 셈지기가 여러 칸을 먹으므로 "몇 마리"가 아니라 "몇 칸"을 보여 준다
+  const slotText = el('b', { class: 'slot-use' }, '');
   const timeText = el('span', { class: 'muted' }, '');
   const pauseBtn = btn('⏸ 잠깐', () => togglePause(), 'btn sm ghost');
 
   const hud = el('div', { class: 'bhud' },
     el('span', {}, '셈력'),
     el('div', { class: 'gauge' }, manaFill),
-    manaText, comboText, speedText,
+    manaText, slotText, comboText, speedText,
     el('span', { class: 'spacer' }), timeText, pauseBtn,
   );
 
@@ -77,14 +79,18 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     const cool = el('div', { class: 'cool' }, '');
     const why = el('div', { class: 'why' }, '셈력 부족');   // 문구는 syncDeck 이 상황에 맞게 바꾼다
     const lv = save.roster[id]?.level ?? 1;
+    const slots = slotsOf(def);
     const card = el('button', {
       class: `dcard r-${def.rarity}`, type: 'button',
-      'aria-label': `${def.name} 소환, 셈력 ${def.cost}${lv > 1 ? `, ${lv}단계` : ''}`,
+      // 🔴 자리를 여러 칸 먹는 셈지기는 그 사실을 **소환 전에** 알아야 한다.
+      //    안 그러면 "셈력도 있고 쿨다운도 끝났는데 안 나가는" 고장난 버튼이 된다.
+      'aria-label': `${def.name} 소환, 셈력 ${def.cost}${slots > 1 ? `, 자리 ${slots}칸` : ''}${lv > 1 ? `, ${lv}단계` : ''}`,
     },
       el('img', { src: assetUrl(id), alt: '' }),
       el('span', { class: 'nm' }, def.name),
       el('span', { class: 'cost' }, `${def.cost}`),
       lv > 1 ? el('span', { class: 'lv' }, `${lv}`) : el('span', {}, ''),
+      slots > 1 ? el('span', { class: 'slots', title: `전장 자리 ${slots}칸` }, '▮'.repeat(slots)) : el('span', {}, ''),
       cool, why,
     );
     card.style.setProperty('--rc', rarityColor(def.rarity));
@@ -242,21 +248,27 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
 
   function syncDeck() {
     // 🔴 전장 상한(ALLY_CAP)에 걸린 경우도 이유를 보여 준다. 상한이 60이던 시절엔 실제로
-    //    닿는 일이 드물어 '셈력 부족'만 있으면 됐지만, 16으로 줄인 뒤로는 자주 닿는다 —
+    //    닿는 일이 드물어 '셈력 부족'만 있으면 됐지만, 줄인 뒤로는 자주 닿는다 —
     //    그대로 두면 셈력도 충분하고 쿨다운도 끝났는데 눌러도 아무 일이 없는,
     //    바로 그 '고장난 버튼'이 된다(대포에서 겪은 것과 같은 실패).
-    const full = battle.aliveAllies >= ALLY_CAP;
+    // 🔴 이제 상한은 **자리** 기준이라 카드마다 막히는 조건이 다르다. 전설은 4칸을 요구하므로
+    //    자리가 2칸 남았으면 짚신이는 나가는데 용왕은 못 나간다 — 카드별로 따로 본다.
+    // 🔴 O(유닛 수)라 프레임마다 두 번 돌 이유가 없다 — 한 번 재서 HUD 와 카드가 나눠 쓴다
+    const used = battle.usedSlots;
     for (const c of cards) {
       const cd = battle.cooldownLeft(c.id);
       const poor = battle.money < c.def.cost;
-      const blocked = poor || full;
+      const noRoom = used + slotsOf(c.def) > ALLY_CAP;
+      const blocked = poor || noRoom;
       c.cool.textContent = cd > 0 ? `${cd.toFixed(1)}` : '';
       c.cool.style.display = cd > 0 ? 'grid' : 'none';
-      c.why.textContent = poor ? '셈력 부족' : '전장이 가득';
+      c.why.textContent = poor ? '셈력 부족' : '자리 부족';
       c.why.style.display = !blocked || cd > 0 ? 'none' : 'block';
       c.card.classList.toggle('locked', blocked && cd <= 0);
       c.card.disabled = false; // 눌러도 되지만 이유를 보여준다(왜 안 되는지 알려주는 게 낫다)
     }
+    slotText.textContent = `자리 ${used}/${ALLY_CAP}`;
+    slotText.classList.toggle('full', used >= ALLY_CAP);
   }
 
   function syncCannon() {
@@ -342,8 +354,16 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
         else if (e.type === 'hit' && e.from !== undefined) renderer.shot(e.from, e.x, e.side);
         // 'spawn' 도 같은 이유로 읽는다 — 나오는 순간과 쓰러지는 순간이 짝이어야
         // "성문에서 나왔다가 맞고 쓰러졌다"가 한 장면으로 읽힌다.
-        else if (e.type === 'spawn') renderer.gate();
+        // 🔴 단 **성문에서 나온 것만** 성문을 번쩍인다. 갈래벌레가 갈라져 나오는 자리는
+        //    전장 한복판이라, 그때도 성문이 열리면 화면이 아이에게 거짓말을 한다.
+        else if (e.type === 'spawn' && e.x >= MAP_LEN - 100) renderer.gate();
+        // 전설 특별기술 — 시뮬은 피해만 몇 배로 줄 뿐이라, 이 표시가 없으면
+        // 가장 귀한 셈지기를 뽑은 보상이 화면에서 통째로 묻힌다
+        else if (e.type === 'skill' && e.name) renderer.skill(e.x, e.r ?? 0, e.name, e.side);
       }
+      // 🔴 승리 소리('win')를 쓰지 않는다 — 판이 끝난 줄 알게 된다. 기술은 '큰 한 방'이므로
+      //    피격음을 쓰되 화면을 더 크게 흔들어 평타와 구분한다(소리 파일을 늘리지 않고).
+      if (battle.events.some((e) => e.type === 'skill')) { renderer.shake(7); play('summon'); }
       if (battle.events.some((e) => e.type === 'castleHit')) { renderer.shake(4); play('hit'); }
       else if (battle.events.some((e) => e.type === 'hit')) play('hit');
       battle.events.length = 0;
@@ -372,7 +392,9 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       //    "난이도가 실제로 오르는가"를 측정할 방법이 없다(레벨은 프롬프트에 안 드러난다).
       q: current ? { key: current.key, type: current.type, level: current.level, dda: battle.dda.level } : null,
       // 연출이 실제로 났는지 — 캔버스를 눈으로 세는 대신 숫자로 확인한다
-      fx: { shots: renderer.shotsFired, sweeps: renderer.sweeps },
+      fx: { shots: renderer.shotsFired, sweeps: renderer.sweeps, skills: renderer.skills },
+      // 자리 상한이 실제로 걸리는지 하네스가 본다 — 순간값은 표본 시점에 이미 비어 있을 수 있다
+      maxSlots: Math.max(Number(window.__gugu__?.['maxSlots'] ?? 0), battle.usedSlots),
     };
     syncHud();
     syncDeck();

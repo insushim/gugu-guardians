@@ -116,7 +116,7 @@ describe('전투 코어', () => {
       b.summon('kkachi');
       b.step(DT);
       b.money = 1e6;
-      expect(b.aliveAllies).toBeLessThanOrEqual(ALLY_CAP);
+      expect(b.usedSlots).toBeLessThanOrEqual(ALLY_CAP);   // 상한은 마리 수가 아니라 자리 수다
     }
   });
 
@@ -174,7 +174,7 @@ describe('전투 불변식 (헤드리스 장기 실행)', () => {
         expect(b.castleHp).toBeLessThanOrEqual(b.stage.castleHp);
         expect(b.playerCastleHp).toBeLessThanOrEqual(b.stage.playerCastleHp);
         expect(b.units.every((u) => u.hp > 0)).toBe(true);
-        expect(b.aliveAllies).toBeLessThanOrEqual(ALLY_CAP);
+        expect(b.usedSlots).toBeLessThanOrEqual(ALLY_CAP);   // 상한은 마리 수가 아니라 자리 수다
         expect(b.dda.level).toBeGreaterThanOrEqual(0);
         expect(b.dda.level).toBeLessThanOrEqual(3);
         expect(b.units.every((u) => u.x >= 0 && u.x <= MAP_LEN)).toBe(true);

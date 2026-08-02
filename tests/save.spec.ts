@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalize, migrate, defaultSave, randomNickname, SAVE_VERSION } from '../src/save/schema';
-import { MANA_CAP_MAX_LV } from '../src/sim/economy';
+import { CANNON_MAX_LV, MANA_CAP_MAX_LV, REGEN_MAX_LV } from '../src/sim/economy';
+import { DECK_SIZE } from '../src/sim/units';
 
 /**
  * DoD 18·19 — 저장/복구.
@@ -60,15 +61,17 @@ describe('세이브 정규화', () => {
     expect(d.deck).toEqual([]);
   });
 
-  it('덱은 보유한 유닛만 최대 5기까지 남는다', () => {
-    const roster = Object.fromEntries(
-      ['jipsin', 'kkachi', 'musoe', 'onggi', 'buttong', 'bungbung'].map((id) => [id, { level: 1, shards: 0 }]),
-    );
-    const d = normalize({ data: {
-      roster,
-      deck: ['jipsin', 'kkachi', 'musoe', 'onggi', 'buttong', 'bungbung', '가짜'],
-    } });
-    expect(d.deck).toEqual(['jipsin', 'kkachi', 'musoe', 'onggi', 'buttong']);
+  /**
+   * 🔴 길이를 숫자로 적지 않는다. 5 를 손으로 적어 뒀더니, 출전 슬롯을 6장으로 늘린 뒤에도
+   *    정규화가 조용히 6번째를 잘라 **고른 셈지기가 저장할 때마다 사라졌다.**
+   *    테스트가 같은 숫자를 베껴 쓰고 있어서 그 회귀를 못 잡았다 — 상수에서 뽑는다.
+   */
+  it(`덱은 보유한 유닛만 최대 ${DECK_SIZE}기까지 남는다`, () => {
+    const owned = ['jipsin', 'kkachi', 'musoe', 'onggi', 'buttong', 'bungbung', 'yeonip', 'namak'];
+    expect(owned.length).toBeGreaterThan(DECK_SIZE);   // 잘림을 실제로 검사하고 있는지
+    const roster = Object.fromEntries(owned.map((id) => [id, { level: 1, shards: 0 }]));
+    const d = normalize({ data: { roster, deck: [...owned, '가짜'] } });
+    expect(d.deck).toEqual(owned.slice(0, DECK_SIZE));
   });
 
   it('SRS 상태가 정의된 4종 밖이면 학습중으로 되돌린다', () => {
@@ -148,6 +151,31 @@ describe('세이브 정규화', () => {
       expect(migrate({ data: { upgrades: { mana: -5 } } }).upgrades.mana).toBe(0);
       expect(migrate({ data: { upgrades: { mana: '셋' } } }).upgrades.mana).toBe(0);
       expect(migrate({ data: { upgrades: 'nope' } }).upgrades.mana).toBe(0);
+    });
+
+    /**
+     * 🔴 v5 는 `upgrades.regen`(셈력 샘)·`upgrades.cannon`(먹 대포)을 더한다.
+     *    v3 때 그릇이 그랬듯, 없는 칸이 undefined 로 흘러가면 `regenMult(undefined)` 가
+     *    NaN 이 되고 전투 시작 즉시 셈력 전체가 NaN 이 된다 — 아무것도 소환할 수 없다.
+     *    한 칸이라도 빠뜨리면 여기서 걸린다.
+     */
+    it('v4 → v5: 샘·대포 단계가 없으면 0으로 채운다', () => {
+      for (const d of [migrate(v1), migrate({ data: { upgrades: { mana: 2 } } })]) {
+        expect(d.upgrades.regen).toBe(0);
+        expect(d.upgrades.cannon).toBe(0);
+        expect(Number.isFinite(d.upgrades.regen)).toBe(true);
+        expect(Number.isFinite(d.upgrades.cannon)).toBe(true);
+      }
+      // 이미 산 그릇 단계는 그대로 보존된다
+      expect(migrate({ data: { upgrades: { mana: 2 } } }).upgrades.mana).toBe(2);
+    });
+
+    it('샘·대포 단계도 최대 단계를 넘지 못한다', () => {
+      const m = (u: unknown) => migrate({ data: { upgrades: u } }).upgrades;
+      expect(m({ regen: 999 }).regen).toBe(REGEN_MAX_LV);
+      expect(m({ cannon: 999 }).cannon).toBe(CANNON_MAX_LV);
+      expect(m({ regen: -3, cannon: -3 })).toMatchObject({ regen: 0, cannon: 0 });
+      expect(m({ regen: '둘', cannon: null })).toMatchObject({ regen: 0, cannon: 0 });
     });
 
     it('codex.unlocked 를 보유 셈지기(roster)로 승격한다', () => {

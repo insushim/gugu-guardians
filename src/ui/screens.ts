@@ -11,7 +11,11 @@ import {
   SUMMON_COST, SUMMON_COST_TEN, PITY_LEGEND, probabilityTable,
   summonOnce, summonTen, upgradeCost, canUpgrade, upgrade, type SummonResult,
 } from '../meta/summon';
-import { manaCap, manaCapCost, MANA_CAP_MAX_LV } from '../sim/economy';
+import {
+  manaCap, manaCapCost, MANA_CAP_MAX_LV,
+  regenCost, REGEN_MAX_LV,
+  cannonCost, CANNON_MAX_LV,
+} from '../sim/economy';
 import { unitCard, rarityName, rarityColor } from './rarity';
 import { TYPE_BY_ID, type QType } from '../edu/curriculum';
 import { QuizSession } from '../edu/session';
@@ -26,6 +30,7 @@ import {
 import { weekKeyUTC, TOP_N } from '../../shared/board-contract';
 import type { BattleResult } from './battle';
 import type { RarityId } from '../sim/types';
+import type { SaveData } from '../save/schema';
 
 type Go = (screen: string, payload?: unknown) => void;
 
@@ -206,7 +211,9 @@ export function prepScreen(go: Go, stageIndex: number): { node: HTMLElement } {
         el('div', {}, el('b', {}, stage.boss ? '수문장이 지키는 길이에요. ' : '오늘의 문제: '), types),
         el('div', { class: 'muted' }, '문제를 맞히면 셈력이 차올라요. 틀려도 성은 다치지 않아요.'),
       ),
-      el('p', { class: 'muted' }, `함께 나갈 셈지기를 ${DECK_SIZE}명까지 골라요.`),
+      // 🔴 자리 규칙을 여기서 한 번 말해 준다. 전투 중에 "왜 안 나가지"로 알게 되면
+      //    그건 규칙이 아니라 고장으로 읽힌다. 카드마다 '자리 N' 도 함께 뜬다(rarity.ts).
+      el('p', { class: 'muted' }, `함께 나갈 셈지기를 ${DECK_SIZE}명까지 골라요. 센 셈지기일수록 전장에서 자리를 많이 차지해요.`),
       grid,
     ),
     el('div', { class: 'actionbar' }, startBtn),
@@ -401,6 +408,10 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
     pityLine.textContent = `전설 확정까지 ${left}번 · 지금까지 ${d.summon.total}번 소환`;
     one.disabled = d.currency.meokmul < SUMMON_COST;
     ten.disabled = d.currency.meokmul < SUMMON_COST_TEN;
+    // 🔴 소환으로 먹물이 줄면 대장간 버튼도 같이 잠겨야 한다. 안 그러면 살 수 없는데
+    //    눌리는 버튼이 남는다 — 이 화면에서 이미 두 번 겪은 '고장난 버튼'이다.
+    //    (같은 지갑을 두 곳에서 쓰므로 한쪽이 쓰면 다른 쪽도 다시 그려야 한다.)
+    refreshForge();
   }
 
   function doSummon(n: number): void {
@@ -468,50 +479,125 @@ export function summonScreen(go: Go): { node: HTMLElement; teardown?: Teardown }
     timers.push(setTimeout(refreshHead, delay + 50));
   }
 
-  // ── 셈력 그릇 강화 ─────────────────────────────────────────────────────
-  // 🔴 소환만 있으면 먹물의 쓸모가 '운'에만 걸린다. 확실히 좋아지는 사용처를 하나 둔다 —
+  // ── 먹물 대장간 (영구 강화) ────────────────────────────────────────────
+  // 🔴 소환만 있으면 먹물의 쓸모가 '운'에만 걸린다. 확실히 좋아지는 사용처를 둔다 —
   //    저학년에겐 "모으면 반드시 좋아지는 것"이 뽑기보다 이해하기 쉽고 덜 좌절스럽다.
-  const capLine = el('div', { class: 'big' }, '');
-  const capNote = el('div', { class: 'muted' }, '');
-  const capBtn = btn('그릇 넓히기', () => upgradeMana(), 'btn');
-
-  function refreshCap(): void {
-    const d = store.load();
-    const lv = d.upgrades.mana;
-    const maxed = lv >= MANA_CAP_MAX_LV;
-    const cost = manaCapCost(lv);
-    capLine.textContent = maxed
-      ? `셈력 그릇 ${manaCap(lv)} · 최대`
-      : `셈력 그릇 ${manaCap(lv)} → ${manaCap(lv + 1)}`;
-    capNote.textContent = maxed
-      ? '더 넓힐 수 없어요. 이미 가장 큰 그릇이에요.'
-      : `${lv}단계 · 다음 단계 먹물 ${cost.toLocaleString('ko-KR')}`;
-    capBtn.textContent = maxed ? '가장 큰 그릇' : `그릇 넓히기 · 먹물 ${cost.toLocaleString('ko-KR')}`;
-    capBtn.disabled = maxed || d.currency.meokmul < cost;
+  // 🔴 그리고 이게 "못 깨던 판을 키워서 깨는" 재도전 루프의 손잡이다. 하나(그릇)뿐일 때는
+  //    막힌 아이가 할 수 있는 게 뽑기 운뿐이었다. 셋으로 늘린다: 담는 양·차는 속도·대포 위력.
+  //    (밸런스 프로브 G9 가 "전력을 키우면 실제로 뚫리는가"를 계속 감시한다.)
+  /**
+   * 크기를 **칸**으로 보여 준다. 숫자(%, 배율)로 적으면 2학년이 못 읽는다.
+   * 최대 단계면 화살표 없이 지금 칸만 보여 준다.
+   */
+  function gauge(label: string, lv: number, maxLv: number): string {
+    const bar = (n: number): string => '▮'.repeat(n) + '▯'.repeat(maxLv - n);
+    return lv >= maxLv ? `${label} ${bar(maxLv)} · 끝까지 키웠어요` : `${label} ${bar(lv)} → ${bar(lv + 1)}`;
   }
 
-  function upgradeMana(): void {
+  interface Forge {
+    title: string;
+    /** 지금 상태 한 줄 — 다음 단계와 함께 보여 준다 */
+    line: (lv: number) => string;
+    help: string;
+    maxLv: number;
+    cost: (lv: number) => number;
+    /** 아이가 누르는 버튼 문구(비용은 따로 붙는다) */
+    verb: string;
+    maxedVerb: string;
+    get: (d: SaveData) => number;
+    set: (d: SaveData, lv: number) => void;
+  }
+
+  const FORGES: Forge[] = [
+    {
+      title: '셈력 그릇',
+      // 🔴 "넘치면 사라져요" 같은 손실 표현은 쓰지 않는다 — 저학년에게는 불안·좌절 신호다.
+      //    같은 사실을 '용량'으로 말하고 곧바로 해결책을 붙인다.
+      line: (lv) => (lv >= MANA_CAP_MAX_LV
+        ? `한 번에 담는 양 ${manaCap(lv)} · 최대`
+        : `한 번에 담는 양 ${manaCap(lv)} → ${manaCap(lv + 1)}`),
+      help: '그릇이 크면 셈력을 더 많이 담아 둘 수 있어요. 비싼 셈지기를 내려면 그릇부터 넓혀요.',
+      maxLv: MANA_CAP_MAX_LV,
+      cost: manaCapCost,
+      verb: '그릇 넓히기',
+      maxedVerb: '가장 큰 그릇',
+      get: (d) => d.upgrades.mana,
+      set: (d, lv) => { d.upgrades.mana = lv; },
+    },
+    {
+      title: '셈력 샘',
+      // 🔴 `%` 로 적지 않는다 — 백분율은 초등 6학년 '비와 비율' 내용이라 주 사용자인
+      //    2학년은 읽지 못한다(소수를 안 쓰는 것과 같은 이유). 이 게임은 이미 같은 문제를
+      //    신바람 표시에서 겪고 "×1.8" 대신 "⚡⚡ 빨라짐"으로 바꾼 전례가 있다.
+      //    크기는 칸으로 보여 준다 — 세어 보면 알 수 있다.
+      line: (lv) => gauge('차오르는 빠르기', lv, REGEN_MAX_LV),
+      help: '가만히 있어도 셈력이 조금씩 차오르는데, 그게 더 빨라져요.',
+      maxLv: REGEN_MAX_LV,
+      cost: regenCost,
+      verb: '샘 빠르게',
+      maxedVerb: '가장 빠른 샘',
+      get: (d) => d.upgrades.regen,
+      set: (d, lv) => { d.upgrades.regen = lv; },
+    },
+    {
+      title: '먹 대포',
+      line: (lv) => gauge('한 발의 힘', lv, CANNON_MAX_LV),
+      help: '대포 한 발이 더 세게 터져요. 밀릴 때 한숨 돌리게 해 주는 비상 단추예요.',
+      maxLv: CANNON_MAX_LV,
+      cost: cannonCost,
+      // '벼리다'는 대장간 말이라 어울리지만 저학년에게 낯설다 — 뜻이 바로 보이는 말로
+      verb: '대포 세게',
+      maxedVerb: '가장 센 대포',
+      get: (d) => d.upgrades.cannon,
+      set: (d, lv) => { d.upgrades.cannon = lv; },
+    },
+  ];
+
+  const forgeRows = FORGES.map((f) => {
+    const line = el('div', { class: 'big' }, '');
+    const note = el('div', { class: 'muted' }, '');
+    const button = btn(f.verb, () => buy(f), 'btn');
+    const refresh = (): void => {
+      const d = store.load();
+      const lv = f.get(d);
+      const maxed = lv >= f.maxLv;
+      const cost = f.cost(lv);
+      line.textContent = f.line(lv);
+      note.textContent = maxed
+        ? '더 키울 수 없어요. 이미 끝까지 키웠어요.'
+        : `${lv}단계 / ${f.maxLv}단계 · 다음 단계 먹물 ${cost.toLocaleString('ko-KR')}`;
+      button.textContent = maxed ? f.maxedVerb : `${f.verb} · 먹물 ${cost.toLocaleString('ko-KR')}`;
+      button.disabled = maxed || d.currency.meokmul < cost;
+    };
+    const node = el('div', { class: 'forge-row' },
+      el('h4', {}, f.title), line, note,
+      el('p', { class: 'muted fine' }, f.help),
+      button,
+    );
+    return { node, refresh };
+  });
+
+  function refreshForge(): void {
+    for (const r of forgeRows) r.refresh();
+  }
+
+  function buy(f: Forge): void {
     const d = store.load();
-    const lv = d.upgrades.mana;
-    const cost = manaCapCost(lv);
-    if (lv >= MANA_CAP_MAX_LV || d.currency.meokmul < cost) return;
-    store.update((s) => { s.currency.meokmul -= cost; s.upgrades.mana = lv + 1; });
+    const lv = f.get(d);
+    const cost = f.cost(lv);
+    if (lv >= f.maxLv || d.currency.meokmul < cost) return;
+    store.update((s) => { s.currency.meokmul -= cost; f.set(s, lv + 1); });
     play('win');
-    refreshHead();
-    refreshCap();
+    refreshHead();   // 대장간 갱신도 여기서 함께 일어난다(같은 지갑을 쓰므로)
   }
 
-  const manaCard = el('div', { class: 'card' },
-    el('h3', {}, '셈력 그릇'),
-    capLine, capNote,
-    // 🔴 "넘치면 사라져요" 같은 손실 표현은 쓰지 않는다 — 저학년에게는 불안·좌절 신호가 된다.
-    //    같은 사실을 '용량'으로 말하고, 곧바로 해결책(넓히기)을 붙인다.
-    el('p', { class: 'muted fine' }, '그릇이 크면 셈력을 더 많이 담아 둘 수 있어요. 그릇이 가득 차면 더는 담기지 않으니, 넓혀 두면 좋아요.'),
-    capBtn,
+  const manaCard = el('div', { class: 'card forge' },
+    el('h3', {}, '먹물 대장간'),
+    el('p', { class: 'muted fine' }, '모은 먹물로 확실하게 좋아지는 것들이에요. 운에 맡기지 않아도 돼요.'),
+    ...forgeRows.map((r) => r.node),
   );
 
   refreshHead();
-  refreshCap();
 
   const rateRows = probabilityTable().map((r) => {
     const row = el('div', { class: 'rate-row' },

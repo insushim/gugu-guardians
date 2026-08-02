@@ -21,8 +21,14 @@ export const MAX_SEC = 420;
 
 /** 볼륨(적 수)은 이 지점에서 성장을 멈춘다 — 계속 늘리면 한 판이 무한정 길어진다 */
 const VOLUME_CAP_STAGE = 30;
-/** 캠페인 이후 적에게만 붙는 추가 배율(아군 진도 성장은 여기서 멈춘다) */
-const ENDLESS_STEP = 1.05;
+/**
+ * 캠페인 이후 적에게만 붙는 추가 배율(아군 진도 성장은 여기서 멈춘다).
+ * 🔴 1.05 였다. 그때 무한 구간은 **벽이 아니라 복도**였다 — 소환 0 로스터조차 ST31~50 을
+ *    전부 100% 로 통과했고(실측), 그래서 "못 깨던 판을 키워서 깬다"는 재도전 루프가
+ *    시작될 지점이 아예 없었다. 실사용자 보고 "긴장감이 없어"의 절반은 여기서 나온다.
+ *    1.07 이면 같은 지점의 적 배율이 2.65배 → 3.87배가 된다.
+ */
+const ENDLESS_STEP = 1.07;
 
 const CHAPTER_NAMES = [
   '첫걸음 들판',
@@ -34,7 +40,7 @@ const CHAPTER_NAMES = [
 ];
 
 const BACKGROUNDS = ['bg_field', 'bg_wall', 'bg_cave', 'bg_night', 'bg_sea', 'bg_sky'];
-const BOSSES = ['e_boss', 'e_boss2', 'e_boss3'];
+const BOSSES = ['e_boss', 'e_boss2', 'e_boss3', 'e_boss4'];
 
 /** 판 이름 — 구역 안 위치로 붙인다 */
 const POS_NAMES: readonly string[] = ['어귀', '오솔길', '건널목', '너른터', '갈림길', '비탈', '숲그늘', '돌다리', '고갯마루', '수문장'];
@@ -104,25 +110,69 @@ export function quizTypesFor(index: number): QType[] {
   return picks.sort((a, b) => TYPE_ORDER.indexOf(a) - TYPE_ORDER.indexOf(b));
 }
 
+/** 은퇴하지 않는 웨이브 */
+const FOREVER = Infinity;   // 🔴 9999 로 두면 '무한'이 1만 판에서 끝난다(교차검증 지적)
+
 /**
- * 적 등장 표 — [id, 최초 등장 스테이지, 첫 등장 시각, 주기 기준, 주기 하한, 체력 예산 지분]
+ * 적 등장 표 — [id, 등장 스테이지, **은퇴 스테이지**, 첫 등장 시각, 주기 기준, 주기 하한, 예산 지분]
  *
  * 🔴 수량을 적별 계수로 정하지 않는다. 그렇게 하면 **적 종류를 하나 추가할 때마다
  *    총 난이도가 그만큼 올라간다** — 실제로 v2 작업 중 적 3종을 추가했더니 ST10 총 체력이
- *    v1 대비 51% 뛰어 전 구간이 전멸했다. 지분(share) 방식은 총량을 먼저 정하고 나누므로
- *    종류를 늘려도 총 난이도가 변하지 않는다.
+ *    v1 대비 51% 뛰어 전 구간이 전멸했다. 지분(share) 방식은 총량을 먼저 정하고 나눈다.
+ *
+ * 🔴 **그래도 종류를 무한정 늘리면 안 된다 — 한 판에 동시에 나오는 종류 수에 상한이 있다.**
+ *    수량은 `max(1, round(...))` 이라 지분이 아무리 작아도 **최소 1마리는 나온다.** 그래서
+ *    동시 활성 종류가 늘면 "종류당 1마리"만으로 예산이 다 소진된다 — v3 에서 16종을 동시에
+ *    켰더니 ST27 에서 1마리씩만 세워도 8,580(예산 8,424)이 되어, 물량 담당(물음표벌레)이
+ *    9마리에서 1마리로 쪼그라들고 총 위협은 오히려 31%→53% 초과가 됐다.
+ *    실측: 정답 60% 아이 ST20 승률 95%→24%, ST27 81%→38%(G2 6건 FAIL).
+ *
+ * 🔴 그래서 **옛 괴수는 물러난다.** 동시 활성은 10종 안팎으로 유지한다. 부수 효과로
+ *    "구역을 넘으니 처음 보는 괴수가 나온다"가 생겨 진행감도 같이 산다.
+ *    새 종을 넣을 때는 반드시 `GUGU_SWEEP_SKIP` 로 원인 귀속을 재고 은퇴표를 함께 손볼 것.
+ *
+ * 🔴 그리고 지분이 고정하는 것은 **총 체력이지 총 위협이 아니다.** 광역·돌파·방어·장사거리는
+ *    같은 체력으로 훨씬 세게 싸운다(하늘연 한 종만으로 ST29 승률 24%p). 특기 있는 종은
+ *    지분을 낮게 준다.
+ *
+ * ⚠️ **행 순서를 보기 좋게 정렬하지 말 것.** 이 배열의 순서가 그대로 `spawns` 순서가 되고,
+ *    그건 같은 프레임에 여러 웨이브가 겹칠 때 **누가 먼저 나오는지**를 정한다 — 즉
+ *    정렬은 겉모습이 아니라 시뮬 결과를 바꾼다(그리고 프로브와 함께 바꿔야 한다).
+ *    등장 스테이지 순으로 읽고 싶으면 주석의 '등장' 열을 보면 된다.
  */
-const WAVES: [string, number, number, number, number, number][] = [
-  ['e_mul',    1,  3,  9.0,  4.0, 0.30],
-  ['e_bat',    2, 14, 13.0,  5.5, 0.12],
-  ['e_swarm',  3,  8,  8.0,  3.5, 0.10],
-  ['e_arch',   4, 24, 20.0,  8.0, 0.12],
-  ['e_rock',   6, 52, 36.0, 16.0, 0.14],
-  ['e_zero',   7, 18, 10.0,  4.0, 0.08],
-  ['e_knot',   9, 30, 22.0,  9.0, 0.12],
-  ['e_minus', 12, 36, 26.0, 11.0, 0.10],
-  ['e_shield',16, 60, 45.0, 22.0, 0.14],
+const WAVES: [string, number, number, number, number, number, number][] = [
+  //  id          등장  은퇴     t0   주기   하한  지분
+  ['e_mul',     1, FOREVER,  3,  9.0,  4.0, 0.30],
+  ['e_bat',     2,      12, 14, 13.0,  5.5, 0.12],
+  ['e_swarm',   3, FOREVER,  8,  8.0,  3.5, 0.10],
+  ['e_arch',    4,      14, 24, 20.0,  8.0, 0.12],
+  ['e_split',   5, FOREVER, 20, 16.0,  7.0, 0.06],
+  ['e_rock',    6,      16, 52, 36.0, 16.0, 0.14],
+  ['e_zero',    7,      13, 18, 10.0,  4.0, 0.08],
+  ['e_sky',    12, FOREVER, 28, 22.0,  9.0, 0.05],
+  ['e_knot',    9,      18, 30, 22.0,  9.0, 0.12],
+  ['e_ghost',  15, FOREVER, 34, 26.0, 12.0, 0.06],
+  ['e_minus',  12,      20, 36, 26.0, 11.0, 0.10],
+  ['e_dash',   13, FOREVER, 26, 18.0,  7.0, 0.04],
+  ['e_shield', 16, FOREVER, 60, 45.0, 22.0, 0.14],
+  ['e_armor',  18, FOREVER, 44, 30.0, 14.0, 0.06],
+  ['e_thorn',  20, FOREVER, 50, 34.0, 15.0, 0.06],
+  ['e_drum',   22, FOREVER, 40, 28.0, 13.0, 0.05],
 ];
+
+/**
+ * 수량 계산에 쓰는 **실효 체력**. 갈래벌레처럼 쓰러지며 새끼를 남기는 적은
+ * 새끼의 체력까지 자기 몫으로 쳐야 예산이 안 샌다.
+ * 🔴 이걸 빼면 분열형을 넣는 순간 그 웨이브가 예산의 3배를 실제로 내보낸다 —
+ *    "종류를 늘려도 총 난이도가 변하지 않는다"는 지분 방식의 전제가 깨진다.
+ */
+function effectiveHp(id: string): number {
+  const e = ENEMY_BY_ID.get(id);
+  if (!e) return 200;
+  const sp = e.split;
+  const childHp = sp ? (ENEMY_BY_ID.get(sp.id)?.hp ?? 0) * sp.n : 0;
+  return e.hp + childHp;
+}
 
 /**
  * 물량 증가 기울기. 🔴 이 값과 `REWARD_SLOPE_RATIO`(economy.ts)는 **짝**이다 —
@@ -195,13 +245,13 @@ export function stageDef(index: number): StageDef {
 
   // 🔴 스폰은 유한하다. 무한 반복으로 두면 느린 플레이어일수록 적이 누적돼
   //    "못하면 더 불리해지는" 죽음의 나선이 생긴다(저성취 하드월의 구조적 원인).
-  const active = WAVES.filter(([, from]) => n >= from);
-  const shareSum = active.reduce((s, w) => s + w[5], 0) || 1;
+  const active = WAVES.filter(([, from, to]) => n >= from && n <= to);
+  const shareSum = active.reduce((s, w) => s + w[6], 0) || 1;
   const mobBudget = budget * (boss ? BOSS_MOB_SHARE : 1);
 
   const spawns: SpawnEntry[] = [];
-  for (const [id, , t0, everyBase, everyMin, share] of active) {
-    const hp = ENEMY_BY_ID.get(id)?.hp ?? 200;
+  for (const [id, , , t0, everyBase, everyMin, share] of active) {
+    const hp = effectiveHp(id);
     spawns.push({
       id,
       t0,

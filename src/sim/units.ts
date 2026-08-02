@@ -2,7 +2,9 @@ import rosterRaw from '../../data/roster.json';
 import type { UnitDef, EnemyDef, RarityDef, RarityId } from './types';
 
 /**
- * 셈지기(아군) 24종 · 엉킴괴수(적) 12종.
+ * 셈지기(아군)·엉킴괴수(적) 정의.
+ * 🔴 종수를 주석에 적지 않는다 — v1 주석은 "24종 · 12종"이라 적어 두고 실제로는 38·21 이었다.
+ *    수를 알고 싶으면 `ALLIES.length` 를 읽으면 된다. 주석은 그럴 수 없는 것만 적는다.
  *
  * 🔴 수치는 `data/roster.json` **하나**에서 온다. tools/balance-probe.mjs 도 같은 파일을 읽는다.
  *    v1에서는 TS와 프로브에 값을 따로 적고 테스트로 대조했는데, 종류가 24개로 늘면
@@ -12,6 +14,7 @@ import type { UnitDef, EnemyDef, RarityDef, RarityId } from './types';
 interface RosterFile {
   version: number;
   rarities: RarityDef[];
+  slotsByRarity: Record<RarityId, number>;
   allies: UnitDef[];
   enemies: EnemyDef[];
   levelGain: number;
@@ -39,12 +42,25 @@ export function rarityRank(id: RarityId): number {
 export const LEVEL_GAIN = roster.levelGain;
 /** 출전 덱 크기 */
 export const DECK_SIZE = roster.deckSize;
-/** 동시 출전 상한 — 없으면 유닛이 무한 누적된다 */
+/**
+ * 전장 **자리** 상한. 마리 수가 아니라 자리 수다 — 등급이 높을수록 자리를 더 먹는다.
+ * 🔴 마리 수로 세면 전설 18기를 쌓는 게 언제나 최적이 되어 덱 구성이 사라진다.
+ */
 export const ALLY_CAP = roster.allyCap;
 
-/** 초당 피해량 */
+export const SLOTS_BY_RARITY: Readonly<Record<RarityId, number>> = roster.slotsByRarity;
+
+/** 이 셈지기가 전장에서 차지하는 자리 수 */
+export function slotsOf(u: UnitDef): number {
+  return Math.max(1, Math.floor(SLOTS_BY_RARITY[u.rarity] ?? 1));
+}
+
+/** 초당 피해량. 전설 특별기술의 평균 기여까지 넣어 센다(덱 추천이 전설을 저평가하지 않게) */
 export function dps(u: UnitDef): number {
-  return u.atk / Math.max(0.1, u.aspd);
+  const base = u.atk / Math.max(0.1, u.aspd);
+  if (!u.skill || u.skill.every < 2) return base;
+  // N타 중 1타가 mult 배 → 평균 배율 = (N-1 + mult) / N
+  return base * ((u.skill.every - 1 + u.skill.mult) / u.skill.every);
 }
 /** 화력에 생존력을 약간 섞은 종합 점수 — 덱 추천용 */
 export function power(u: UnitDef): number {

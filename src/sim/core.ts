@@ -1,12 +1,40 @@
-import type { BattleStatus, LiveUnit, StageDef } from './types';
-import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult } from './units';
+import type { BattleStatus, EnemyDef, LiveUnit, StageDef } from './types';
+import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult, slotsOf } from './units';
 import { allyGrowth, enemyBudget, MAP_LEN, MAX_SEC } from './stages';
 import { clampTier, tierAoe, tierAtk, tierBreakShare, type MatchOutcome } from './tier';
 import {
-  baseRegen, cannonDamage, CANNON_CASTLE_SHARE, CANNON_KNOCKBACK, CANNON_PER_CORRECT, HASTE_DECAY, HASTE_MAX,
-  HASTE_PER_CORRECT, hasteOf, manaCap, newDda, rewardFor, START_MONEY, stepDda,
+  baseRegen, cannonDamage, CANNON_CASTLE_SHARE, CANNON_KNOCKBACK, CANNON_PER_CORRECT, cannonMult,
+  HASTE_DECAY, HASTE_MAX, HASTE_PER_CORRECT, hasteOf, manaCap, newDda, regenMult, rewardFor,
+  START_MONEY, stepDda,
   type DdaState,
 } from './economy';
+
+/**
+ * 방어력을 뚫지 못한 공격이 그래도 남기는 몫.
+ * 🔴 0 으로 두면 약한 셈지기가 무쇠엉킴 앞에서 **영원히 아무 일도 못 한다** —
+ *    저학년 게임에서 "때리는데 체력바가 안 움직인다"는 고장으로 읽힌다.
+ *    깎이긴 하되 아주 느리게, 가 정답이다.
+ */
+export const ARMOR_FLOOR = 0.15;
+
+/** 갈래벌레의 새끼가 태어나는 좌우 간격 */
+const SPLIT_SPREAD = 26;
+/** 한 마리가 갈라져 나올 수 있는 최대 수 — 데이터 오타가 유닛 폭증이 되지 않게 */
+const SPLIT_MAX = 4;
+
+/**
+ * 먹물로 산 영구 강화. 전투 **밖에서만** 바뀌고 전투는 읽기만 한다.
+ * 🔴 위치 인자로 늘리지 않는다 — `new Battle(stage, levels, 0, 2, 0, 3)` 같은 호출은
+ *    어느 0이 무엇인지 읽는 사람이 알 수 없고, 한 칸 밀리면 조용히 다른 값이 들어간다.
+ */
+export interface BattleUpgrades {
+  /** 셈력 그릇(용량) 단계 */
+  mana?: number;
+  /** 셈력 샘(회복 속도) 단계 */
+  regen?: number;
+  /** 먹 대포 단계 */
+  cannon?: number;
+}
 
 /**
  * 성문 앞 통로 폭. 아군은 `MAP_LEN - ALLY_CEIL_GAP` 보다 앞으로 못 간다.
@@ -56,6 +84,10 @@ export class Battle {
   answerMs = 0;
   /** 셈력 그릇(상한) — 먹물로 키운 단계에서 온다 */
   readonly manaMax: number;
+  /** 셈력 샘 배율 — 자동 충전 속도. 먹물로 키운 단계에서 온다 */
+  readonly regenMul: number;
+  /** 먹 대포 위력 배율 — 먹물로 키운 단계에서 온다 */
+  readonly cannonMul: number;
   /** 신바람 부스트. 정답으로 오르고 시간으로 풀린다 — **아군에게만** 걸린다 */
   hasteBoost = 0;
   /** 먹 대포 충전(0~1). 정답으로만 찬다 */
@@ -68,9 +100,13 @@ export class Battle {
   private spawnCount = new Map<string, number>();
   /** 렌더/사운드가 소비하는 1회성 이벤트 큐 */
   events: {
-    type: 'hit' | 'die' | 'summon' | 'castleHit' | 'spawn';
+    type: 'hit' | 'die' | 'summon' | 'castleHit' | 'spawn' | 'skill';
     x: number;
     side: 1 | -1;
+    /** 'skill' 일 때만 — 화면에 띄울 기술 이름 */
+    name?: string;
+    /** 'skill' 일 때만 — 터진 광역 반경 */
+    r?: number;
     /** 때린 쪽의 위치. 원거리 공격을 **날아가는 것**으로 그리려면 출발점이 필요하다.
      *  🔴 그리기 전용이다 — 시뮬 수치에는 쓰지 않는다. */
     from?: number;
@@ -88,7 +124,7 @@ export class Battle {
   constructor(
     stage: StageDef,
     levels: Readonly<Record<string, number>> = {},
-    manaLevel = 0,
+    upgrades: BattleUpgrades = {},
     tier = 0,
   ) {
     this.stage = stage;
@@ -97,7 +133,9 @@ export class Battle {
     this.growth = allyGrowth(stage.index);
     this.castleHp = stage.castleHp;
     this.playerCastleHp = stage.playerCastleHp;
-    this.manaMax = manaCap(manaLevel);
+    this.manaMax = manaCap(upgrades.mana ?? 0);
+    this.regenMul = regenMult(upgrades.regen ?? 0);
+    this.cannonMul = cannonMult(upgrades.cannon ?? 0);
     this.money = Math.min(START_MONEY, this.manaMax);
     for (const s of stage.spawns) this.spawnNext.set(s.id, s.t0);
   }
@@ -133,11 +171,12 @@ export class Battle {
     //    (실측: 캠페인 로스터만으로 ST60 도달 → 게이트 '소환 무의미' FAIL).
     //    그래서 **아군 성장선(allyGrowth)** 에 묶는다 — 캠페인 동안은 위력을 유지하고,
     //    무한구간에서는 아군과 함께 뒤처진다. 그 격차를 메우는 게 소환·승급의 역할이다.
-    const dmg = cannonDamage(enemyBudget(this.stage.index)) * this.growth;
+    const dmg = cannonDamage(enemyBudget(this.stage.index)) * this.growth * this.cannonMul;
     for (const u of this.units) {
       if (u.side !== -1 || u.hp <= 0) continue;
-      u.hp -= dmg;
-      u.hurtAt = this.t;
+      // 🔴 대포에도 방어력이 걸린다. 안 걸면 무쇠엉킴을 세운 의미가 사라진다 —
+      //    "약한 공격은 튕겨 낸다"는 적인데 가장 센 한 방만 예외면 규칙이 아니라 변덕이다.
+      this.hurt(u, dmg);
       // 고정형(수문장)은 밀리지 않는다 — 밀면 성 안으로 파고들어 사거리 판정이 깨진다
       if (u.spd > 0) u.x = Math.min(MAP_LEN, u.x + CANNON_KNOCKBACK);
       this.events.push({ type: 'hit', x: u.x, side: -1 });
@@ -145,8 +184,8 @@ export class Battle {
     // 🔴 성에도 때린다. 예전엔 **살아 있는 적에게만** 피해를 줬는데, 전선이 적 성 앞까지
     //    밀고 올라가면 화면에 적이 한 마리도 없는 시간이 길다(실측: 1판 28초 이후 적군 0마리).
     //    그때 대포를 누르면 충전만 사라지고 아무 일도 안 일어났다 — 아이 눈에는 **고장난 버튼**이다.
-    //    정답 12개로 번 것이 아무것도 아닌 게 되면 "정답의 하류에 쾌감을 둔다"는 원칙이 깨진다.
-    this.castleHp -= this.stage.castleHp * CANNON_CASTLE_SHARE;
+    //    정답 열몇 개로 번 것이 아무것도 아닌 게 되면 "정답의 하류에 쾌감을 둔다"는 원칙이 깨진다.
+    this.castleHp -= this.stage.castleHp * CANNON_CASTLE_SHARE * this.cannonMul;
     this.events.push({ type: 'castleHit', x: MAP_LEN, side: 1 });
     return true;
   }
@@ -157,6 +196,18 @@ export class Battle {
     return n;
   }
 
+  /**
+   * 지금 전장이 쓰고 있는 **자리** 수. 상한(ALLY_CAP)은 마리 수가 아니라 이 값과 비교한다.
+   * 🔴 마리 수로 세면 전설만 18기 쌓는 게 언제나 최적이 되어 덱 구성이 사라진다 —
+   *    센 셈지기일수록 자리를 더 먹어야 "무엇을 내려놓고 무엇을 낼까"가 선택이 된다.
+   */
+  get usedSlots(): number {
+    let n = 0;
+    for (const u of this.units) if (u.side === 1 && u.hp > 0) n += u.slots ?? 1;
+    return n;
+  }
+
+
   cooldownLeft(defId: string): number {
     return Math.max(0, (this.cooldowns.get(defId) ?? 0) - this.t);
   }
@@ -164,7 +215,9 @@ export class Battle {
   canSummon(defId: string): boolean {
     const def = ALLY_BY_ID.get(defId);
     if (!def || this.status !== 'playing') return false;
-    return this.money >= def.cost && this.cooldownLeft(defId) <= 0 && this.aliveAllies < ALLY_CAP;
+    return this.money >= def.cost
+      && this.cooldownLeft(defId) <= 0
+      && this.usedSlots + slotsOf(def) <= ALLY_CAP;
   }
 
   summon(defId: string): boolean {
@@ -188,6 +241,9 @@ export class Battle {
       atkAt: 0,
       hurtAt: -99,
       swingAt: -99,
+      slots: slotsOf(def),
+      ...(def.aoe ? { aoe: def.aoe } : {}),
+      ...(def.skill ? { skill: def.skill } : {}),
     });
     this.events.push({ type: 'summon', x: 0, side: 1 });
     return true;
@@ -223,7 +279,7 @@ export class Battle {
   step(dt: number): void {
     if (this.status !== 'playing') return;
     this.t += dt;
-    this.money = Math.min(this.manaMax, this.money + baseRegen(this.stage.index) * dt);
+    this.money = Math.min(this.manaMax, this.money + baseRegen(this.stage.index) * this.regenMul * dt);
     this.hasteBoost = Math.max(0, this.hasteBoost - HASTE_DECAY * dt);
 
     this.spawnEnemies();
@@ -259,31 +315,11 @@ export class Battle {
         const e = ENEMY_BY_ID.get(s.id);
         if (e) {
           // 수문장은 구역별 기본 체력 차이를 예산에 맞춰 보정한다(stages.ts 의 hpMul)
-          const m = this.stage.mult * (s.hpMul ?? 1);
-          // 🔴 난이도 단계 적용. **0단계에서는 아래 셋 다 무효**여야 한다
+          // 🔴 난이도 단계 적용. **0단계에서는 단계발 배율·돌파·광역이 모두 무효**여야 한다
           //    (배율 1.0 · 돌파 0 · 광역 0) — 그게 G2 안전망의 근거다.
-          //    돌파형은 **고정형(수문장)과 보스에는 걸지 않는다** — 자리를 지키는 게 그 유닛의 역할이다.
-          const breaker = e.spd > 0 && this.breakerRoll(n);
-          this.units.push({
-            uid: this.uidSeq++,
-            side: -1,
-            defId: e.id,
-            // 고정형(수문장)은 적 성 앞에 선다
-            x: e.spd === 0 ? MAP_LEN - 80 : MAP_LEN,
-            hp: e.hp * m,
-            maxHp: e.hp * m,
-            atk: e.atk * this.stage.mult * tierAtk(this.tier),
-            aspd: e.aspd,
-            range: e.range,
-            // 돌파형은 싸우지 않고 달린다 — 조금 빨라야 "지나간다"가 읽힌다
-            spd: breaker ? e.spd * 1.25 : e.spd,
-            atkAt: 0,
-            hurtAt: -99,
-            swingAt: -99,
-            ...(breaker ? { breaker: true } : {}),
-            // 광역은 느리고 단단한 적·수문장에게만 준다(빠른 잡몹까지 광역이면 전선이 즉사한다)
-            ...(tierAoe(this.tier) > 0 && e.spd <= 24 ? { aoe: tierAoe(this.tier) } : {}),
-          });
+          //    태생 능력(e.breaker·e.aoe)은 그와 별개다. 그건 "이 괴수가 원래 그렇다"이고
+          //    등장 스테이지·예산 지분으로 조절된다(stages.ts 의 WAVES).
+          this.units.push(this.makeEnemy(e, s.hpMul ?? 1, this.breakerRoll(n)));
           this.spawnCount.set(s.id, n + 1);
           // 🔴 적이 **나왔다는 사실 자체**를 렌더러에 알린다. 전선이 적 성에 닿은 뒤로는
           //    적이 성문에서 나오자마자 0.7~1.5초 만에 죽는다(ST1 실측: 3번째 적부터
@@ -295,6 +331,47 @@ export class Battle {
       }
       this.spawnNext.set(s.id, this.t + s.every);
     }
+  }
+
+  /**
+   * 엉킴괴수 1기를 만든다. 스폰과 분열이 같은 규칙을 쓰도록 한 곳에 모은다 —
+   * 두 곳에 적으면 단계 배율이나 방어력이 한쪽에만 붙는 사고가 난다.
+   * @param x 생략하면 기본 등장 위치(고정형은 성 앞, 나머지는 성문)
+   */
+  private makeEnemy(e: EnemyDef, hpMul: number, rollBreaker: boolean, x?: number, canSplit = true): LiveUnit {
+    const hp = e.hp * this.stage.mult * hpMul;
+    // 돌파형은 **고정형(수문장)에는 걸지 않는다** — 자리를 지키는 게 그 유닛의 역할이다.
+    const breaker = e.spd > 0 && (e.breaker === true || rollBreaker);
+    // 태생 광역과 단계 광역 중 넓은 쪽. 단계 광역은 느리고 단단한 적·수문장에게만 준다
+    // (빠른 잡몹까지 광역이면 전선이 즉사한다).
+    const aoe = Math.max(e.aoe ?? 0, e.spd <= 24 ? tierAoe(this.tier) : 0);
+    return {
+      uid: this.uidSeq++,
+      side: -1,
+      defId: e.id,
+      x: x ?? (e.spd === 0 ? MAP_LEN - 80 : MAP_LEN),
+      hp,
+      maxHp: hp,
+      atk: e.atk * this.stage.mult * tierAtk(this.tier),
+      aspd: e.aspd,
+      range: e.range,
+      // 돌파형은 싸우지 않고 달린다 — 조금 빨라야 "지나간다"가 읽힌다
+      spd: breaker ? e.spd * 1.25 : e.spd,
+      atkAt: 0,
+      hurtAt: -99,
+      swingAt: -99,
+      ...(breaker ? { breaker: true } : {}),
+      ...(aoe > 0 ? { aoe } : {}),
+      // 🔴 방어력도 스테이지 배율을 따라 커진다. 고정값으로 두면 아군 공격력만 커져
+      //    후반에는 "약한 공격은 튕겨 낸다"가 아무 의미도 없는 장식이 된다.
+      ...(e.armor ? { armor: e.armor * this.stage.mult } : {}),
+      // 🔴 분열로 태어난 개체에게는 `split` 을 **주지 않는다**(canSplit=false).
+      //    지금은 새끼 정의(e_splitlet)에 split 이 없어서 어차피 멈추지만, 그건
+      //    데이터가 우연히 그렇다는 뜻이지 코드가 막는다는 뜻이 아니다 —
+      //    누가 새끼에게 split 을 달면 그 순간 유닛이 무한 증식한다(교차검증 지적).
+      //    총량 유한성은 이 게임의 설계 제약이라(stages.ts 머리말) 코드가 지킨다.
+      ...(canSplit && e.split ? { split: { id: e.split.id, n: Math.max(1, Math.min(SPLIT_MAX, Math.floor(e.split.n))) } } : {}),
+    };
   }
 
   /**
@@ -344,11 +421,21 @@ export class Battle {
       const atCeil = u.side === 1 && u.x >= ALLY_CEIL - 1e-6;
       if (!target && (castleDist <= u.range || atCeil)) {
         if (this.t >= u.atkAt) {
-          if (u.side === 1) this.castleHp -= u.atk;
-          else this.playerCastleHp -= u.atk;
+          // 성에도 특별기술이 걸린다(광역은 의미가 없으니 배율만). 안 걸면 전선이 성에 닿은 뒤로
+          // 전설이 영영 기술을 안 쓴다 — 아이 눈에는 "샀는데 안 나오는 기술"이 된다.
+          const sw = this.swing(u);
+          if (u.side === 1) this.castleHp -= sw.dmg;
+          else this.playerCastleHp -= sw.dmg;
           u.atkAt = this.t + u.aspd / hs;
           u.swingAt = this.t;
           this.events.push({ type: 'castleHit', x: u.x, side: u.side });
+          // 🔴 여기서도 기술 이벤트를 내보낸다. 배율만 적용하고 알리지 않으면,
+          //    전선이 성문에 닿은 뒤로는 전설이 기술을 써도 화면에 아무 일도 안 일어난다 —
+          //    바로 위 `swing()` 주석이 경고한 "샀는데 안 나오는 기술"이 그대로 재현된다.
+          //    성에는 광역이 의미 없으므로 반경은 0으로 보낸다(렌더러가 최소 크기로 그린다).
+          if (sw.special && u.skill) {
+            this.events.push({ type: 'skill', x: u.x, side: u.side, from: u.x, name: u.skill.name, r: 0 });
+          }
         }
         continue;
       }
@@ -371,35 +458,84 @@ export class Battle {
   }
 
   /**
-   * 한 대 때린다. 광역이면 대상 주변까지 함께 맞는다.
-   * 🔴 광역은 "뭉쳐 있을수록 손해"를 만든다 — 아군 16기가 한 점에 쌓여 있는 것이
-   *    지금 게임에서 아무 대가 없는 지배 전략이라 판이 밋밋해졌다.
+   * 이번 한 대의 위력·광역을 정한다. **때린 횟수를 여기서만 센다** —
+   * 성 공격과 유닛 공격이 같은 카운터를 써야 "N타마다 한 번"이 아이가 세는 것과 맞는다.
+   *
+   * 🔴 확률이 아니라 주기다. 시뮬이 결정론이어야 프로브·parity 테스트가 성립하고,
+   *    저학년에게도 "몇 대 때리면 나온다"가 운보다 읽기 쉽다.
+   */
+  private swing(u: LiveUnit): { dmg: number; aoe: number; special: boolean } {
+    const hits = (u.hits ?? 0) + 1;
+    u.hits = hits;
+    const sk = u.skill;
+    if (sk && sk.every >= 2 && hits % sk.every === 0) {
+      u.skillAt = this.t;
+      return { dmg: u.atk * sk.mult, aoe: sk.aoe, special: true };
+    }
+    return { dmg: u.atk, aoe: u.aoe ?? 0, special: false };
+  }
+
+  /**
+   * 피해 1건 적용. 방어력이 있으면 깎아 준다.
+   * 🔴 완전 무효는 만들지 않는다(ARMOR_FLOOR) — "때리는데 체력바가 안 움직인다"는
+   *    저학년에게 전략이 아니라 고장으로 읽힌다.
+   */
+  private hurt(v: LiveUnit, dmg: number): void {
+    const armor = v.armor ?? 0;
+    v.hp -= armor > 0 ? Math.max(dmg * ARMOR_FLOOR, dmg - armor) : dmg;
+    v.hurtAt = this.t;
+  }
+
+  /**
+   * 한 대 때린다. 광역이면 **대상 주변에 겹쳐 선 것까지 함께** 맞는다.
+   * 🔴 광역은 "뭉쳐 있을수록 손해"를 만든다 — 아군을 한 점에 쌓아 두는 것이
+   *    아무 대가 없는 지배 전략이라 판이 밋밋해졌다(실사용자 보고 "긴장감이 없어").
    */
   private strike(u: LiveUnit, target: LiveUnit): void {
-    const r = u.aoe ?? 0;
-    if (r <= 0) {
-      target.hp -= u.atk;
-      target.hurtAt = this.t;
-      this.events.push({ type: 'hit', x: target.x, side: target.side, from: u.x });
-      return;
-    }
-    for (const v of this.units) {
-      if (v.side === u.side || v.hp <= 0) continue;
-      if (Math.abs(v.x - target.x) > r) continue;
-      v.hp -= u.atk;
-      v.hurtAt = this.t;
+    const sw = this.swing(u);
+    if (sw.aoe <= 0) {
+      this.hurt(target, sw.dmg);
+    } else {
+      for (const v of this.units) {
+        if (v.side === u.side || v.hp <= 0) continue;
+        if (Math.abs(v.x - target.x) > sw.aoe) continue;
+        this.hurt(v, sw.dmg);
+      }
     }
     this.events.push({ type: 'hit', x: target.x, side: target.side, from: u.x });
+    if (sw.special && u.skill) {
+      this.events.push({ type: 'skill', x: target.x, side: u.side, from: u.x, name: u.skill.name, r: sw.aoe });
+    }
   }
 
   private cleanup(): void {
+    /** 분열로 태어난 새끼 — 순회 중에 배열을 늘리지 않으려고 모았다가 한 번에 넣는다 */
+    const born: LiveUnit[] = [];
     for (let i = this.units.length - 1; i >= 0; i--) {
       const u = this.units[i]!;
       if (u.hp <= 0) {
         this.events.push({ type: 'die', x: u.x, side: u.side });
+        // 🔴 갈라져 나온 새끼는 **다시 갈라지지 않는다.** 새끼의 정의(e_splitlet)에 split 이
+        //    없기 때문인데, 이건 데이터에 의존하는 안전장치라 눈에 안 보인다 —
+        //    tests/sim.spec.ts 가 "분열은 한 세대에서 멈춘다"를 직접 검사한다.
+        //    (총량은 유한하다: 스폰 상한 × n. 느린 플레이어일수록 적이 누적되는
+        //     '죽음의 나선'은 총량이 늘어야 생기므로 여기엔 없다 — stages.ts 머리말 참고.)
+        const sp = u.split;
+        if (sp && u.side === -1) {
+          const child = ENEMY_BY_ID.get(sp.id);
+          if (child) {
+            for (let k = 0; k < sp.n; k++) {
+              const dx = (k - (sp.n - 1) / 2) * SPLIT_SPREAD;
+              const x = Math.max(0, Math.min(MAP_LEN, u.x + dx));
+              born.push(this.makeEnemy(child, 1, false, x, false));
+              this.events.push({ type: 'spawn', x, side: -1 });
+            }
+          }
+        }
         this.units.splice(i, 1);
       }
     }
+    if (born.length) this.units.push(...born);
   }
 
 }

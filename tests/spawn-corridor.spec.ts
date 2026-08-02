@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ALLY_CEIL_GAP, Battle, RESERVE_COVER, RESERVE_SHARE } from '../src/sim/core';
 import { stageDef, MAP_LEN } from '../src/sim/stages';
+import { ENEMIES, ENEMY_BY_ID } from '../src/sim/units';
 // @ts-expect-error — 프로브 모델은 순수 JS다(Node 로 그대로 돌려야 해서 TS로 두지 않는다)
 import * as probe from '../tools/probe-model.mjs';
 
@@ -19,7 +20,7 @@ function run(stage: number, steps = 13000): {
   b: Battle; maxAllyX: number; spawned: number; lastSpawn: number; end: number;
   movers: number; deaths: number;
 } {
-  const b = new Battle(stageDef(stage), {}, 6, 0);
+  const b = new Battle(stageDef(stage), {}, { mana: 6 }, 0);
   const born = new Map<number, number>();
   let t = 0, maxAllyX = 0, spawned = 0, lastSpawn = 0, movers = 0, deaths = 0;
   for (let i = 0; i < steps && b.status === 'playing'; i++) {
@@ -75,9 +76,29 @@ describe('성문 앞 통로 — 적이 나올 자리', () => {
 describe('예비대 — 판이 끝날 때까지 적이 끊기지 않게', () => {
   it('총량은 늘지 않는다 (느릴수록 불리해지는 죽음의 나선 금지)', () => {
     // 🔴 stages.ts 가 명시한 설계 제약이다. 예비대는 **언제 나오는지만** 바꾼다.
+    // 🔴 분열형(갈래벌레)이 생기면서 상한이 `cap 합`이 아니게 됐다. 새끼는 부모 1기당
+    //    정해진 수만큼만 나오므로 총량은 여전히 **유한하고 플레이어 속도와 무관**하다 —
+    //    지키려는 성질은 그것이므로 상한도 그 성질대로 계산한다.
+    //    (그냥 숫자를 올려 통과시키면 "무한 스폰이 아니다"를 더는 검사하지 않게 된다.)
     for (const st of [1, 5, 12, 20]) {
-      const cap = stageDef(st).spawns.reduce((s, x) => s + x.cap, 0);
+      const cap = stageDef(st).spawns.reduce((s, x) => {
+        const sp = ENEMY_BY_ID.get(x.id)?.split;
+        return s + x.cap * (1 + (sp ? sp.n : 0));
+      }, 0);
       expect(run(st).spawned).toBeLessThanOrEqual(cap);
+    }
+  });
+
+  it('분열은 한 세대에서 멈춘다 — 새끼는 다시 갈라지지 않는다', () => {
+    // 🔴 새끼가 또 갈라지면 총량이 무한해져 위 불변식이 통째로 무너진다.
+    //    지금은 새끼 정의(e_splitlet)에 split 이 없어서 멈추는데, 그건 **데이터에 기댄
+    //    안전장치**라 눈에 보이지 않는다. 데이터가 바뀌면 여기서 걸린다.
+    for (const e of ENEMIES) {
+      const sp = e.split;
+      if (!sp) continue;
+      const child = ENEMY_BY_ID.get(sp.id);
+      expect(child, `${e.id} 의 새끼 ${sp.id} 가 로스터에 없다`).toBeDefined();
+      expect(child?.split, `${sp.id} 가 또 갈라진다 — 총량이 무한해진다`).toBeUndefined();
     }
   });
 
@@ -150,7 +171,7 @@ describe('프로브 미러', () => {
     expect(late).toBeGreaterThan(3);
 
     // 코어에서 같은 판을 돌려 종류별 총량이 상한 안에 있고, 예비대가 실제로 뒤로 밀렸는지 본다
-    const b = new Battle(stageDef(12), {}, 6, 0);
+    const b = new Battle(stageDef(12), {}, { mana: 6 }, 0);
     const core = new Map<string, number>();
     let t = 0; let lateCore = 0, earlyCore = 0;
     for (let i = 0; i < 13000 && b.status === 'playing'; i++) {
@@ -192,7 +213,7 @@ describe('원거리 공격이 화면에 보이는가', () => {
   it('때린 자리뿐 아니라 **쏜 자리**도 이벤트에 실린다', () => {
     // 🔴 시뮬은 사거리 안이면 즉시 체력을 깎는다. 출발점이 없으면 렌더러가 날아가는 그림을
     //    그릴 수 없고, 사거리 250짜리 청룡이 뭘 하는지 화면에서 안 읽힌다(실사용자 보고).
-    const b = new Battle(stageDef(12), { chorong: 4, cheongryong: 4, jipsin: 4 }, 6, 0);
+    const b = new Battle(stageDef(12), { chorong: 4, cheongryong: 4, jipsin: 4 }, { mana: 6 }, 0);
     let ranged = 0, melee = 0;
     for (let i = 0; i < 4000; i++) {
       b.money = 99999;

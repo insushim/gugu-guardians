@@ -21,7 +21,7 @@ type Track = { id: string; born: number; died: number | null; minX: number; step
 
 function run(stageIndex: number, deck: string[]) {
   const stage = stageDef(stageIndex);
-  const b = new Battle(stage, {}, 0);
+  const b = new Battle(stage);
   const tracks = new Map<number, Track>();
   const cds = new Map<string, number>();
 
