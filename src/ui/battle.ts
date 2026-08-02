@@ -65,6 +65,13 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   );
 
   const deckCol = el('div', { class: 'deck-row' });
+  // 카드가 남은 폭을 장수로 나눠 쓰게 한다 — 슬롯이 늘어도 잘리지 않는다(style.css 의 --deck-n).
+  // 폭은 CSS 로 못 구한다(순환 참조) — 실제로 재서 넣어 준다.
+  deckCol.style.setProperty('--deck-n', String(Math.max(1, deck.length)));
+  const fitDeck = (): void => {
+    const w = deckCol.clientWidth;
+    if (w > 0) deckCol.style.setProperty('--deck-space', `${w}px`);
+  };
   const cards = deck.map((id) => {
     const def = ALLY_BY_ID.get(id)!;
     const cool = el('div', { class: 'cool' }, '');
@@ -377,8 +384,12 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   // 중간에 탭을 닫아도 공부한 기록이 남도록 주기 저장
   const autosave = setInterval(() => { store.update(() => {}); }, 30000);
 
-  const onResize = () => renderer.resize();
+  const onResize = () => { renderer.resize(); fitDeck(); };
   window.addEventListener('resize', onResize);
+  // 🔴 창 크기 변화 말고도 폭이 바뀌는 경로가 있다(기기 회전·주소창 접힘·글자 크기 설정).
+  //    덱 칸 자체를 관찰해야 놓치지 않는다.
+  const deckObs = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => fitDeck()) : null;
+  deckObs?.observe(deckCol);
 
   // 키보드: 숫자키/백스페이스 — 🔴 e.key만 보면 한글 입력 상태에서 전멸하므로 e.code도 함께 본다
   const onKey = (e: KeyboardEvent) => {
@@ -393,6 +404,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   // 시작
   queueMicrotask(() => {
     renderer.resize();
+    fitDeck();
     nextQuestion();
     raf = requestAnimationFrame(loop);
   });
@@ -401,6 +413,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     clearInterval(autosave);
     cancelAnimationFrame(raf);
     window.removeEventListener('resize', onResize);
+    deckObs?.disconnect();
     window.removeEventListener('keydown', onKey);
   };
 

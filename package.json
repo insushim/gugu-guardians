@@ -14,7 +14,8 @@
     "build:single": "node tools/build-single.mjs",
     "deploy:server": "wrangler deploy --config server/wrangler.jsonc",
     "check:assets": "node tools/asset-check.mjs && node tools/asset-check.mjs public/assets",
-    "qa:launch": "node tools/qa-launch.mjs"
+    "qa:launch": "node tools/qa-launch.mjs",
+    "check:layout": "node tools/layout-check.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260728.1",
