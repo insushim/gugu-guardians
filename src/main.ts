@@ -7,6 +7,7 @@ import {
   menuScreen, mapScreen, prepScreen, gateScreen, resultScreen, summonScreen,
   codexScreen, srsScreen, reportScreen, settingsScreen, boardScreen, type ResultPayload,
 } from './ui/screens';
+import { armAutoFullscreen } from './ui/fullscreen';
 import * as store from './save/store';
 import { submitScore } from './net/board';
 import { weekKey, today } from './edu/date';
@@ -132,6 +133,9 @@ function syncRotate(): void {
 window.addEventListener('resize', syncRotate);
 window.addEventListener('orientationchange', syncRotate);
 syncRotate();
+
+// 가로로 돌린 휴대폰은 첫 터치에 전체화면으로 — 왜 '첫 터치'인지는 모듈 머리말 참고
+armAutoFullscreen();
 
 boot().catch((e: unknown) => {
   root.replaceChildren();
