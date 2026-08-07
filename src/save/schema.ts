@@ -2,7 +2,7 @@ import type { QType } from '../edu/curriculum';
 import { ALL_TYPE_IDS } from '../edu/curriculum';
 import { ALLIES, ALLY_BY_ID, DECK_SIZE, maxLevel, progressionAllies } from '../sim/units';
 import { PITY_LEGEND } from '../meta/summon';
-import { EASY_STREAK_TO_RAISE, MAX_TIER } from '../sim/tier';
+import { EASY_STREAK_TO_RAISE, LOSE_STREAK_TO_DROP, MAX_TIER } from '../sim/tier';
 import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
@@ -248,10 +248,19 @@ export function normalize(input: unknown): SaveData {
     },
     challenge: {
       tier: Math.floor(num(challenge['tier'], 0, 0, MAX_TIER)),
-      // 🔴 상한이 EASY_STREAK_TO_RAISE 면 한 칸 넉넉하다 — nextTier 가 만들어 내는
-      //    대기 streak 의 최댓값은 EASY_STREAK_TO_RAISE - 1 이다(그 값에 닿는 순간 승급하고 0 으로 리셋).
-      //    손상된 저장의 streak=2 를 유효 상태로 받아들이면 승리 한 판만으로 승급한다.
-      streak: Math.floor(num(challenge['streak'], 0, 0, EASY_STREAK_TO_RAISE - 1)),
+      /**
+       * 🔴 이 칸은 **양방향**이다: 양수 = 여유 연승 대기, 음수 = 연패 대기(nextTier 참고).
+       *    범위는 nextTier 가 실제로 만들어 내는 값과 정확히 같아야 한다 —
+       *    양쪽 끝에 닿는 순간 승급/강등하고 0 으로 리셋하므로 대기값의 최댓값은
+       *    `EASY_STREAK_TO_RAISE - 1`, 최솟값은 `-(LOSE_STREAK_TO_DROP - 1)` 이다.
+       * 🔴 여기 하한이 0 이면 **연패 카운트가 로드 때마다 지워진다.** 그러면
+       *    "2연패라야 내려간다"가 조용히 "안 내려간다"가 되어 새 규칙이 무력화된다.
+       *    (EASY_STREAK_TO_RAISE 를 2→1 로 내리면서 범위가 [0,0] 이 되어 실제로 그랬다.)
+       * 🔴 반대로 넉넉하게 잡으면 손상된 저장의 streak=2 가 승리 한 판만으로 승급시킨다.
+       */
+      streak: Math.floor(num(
+        challenge['streak'], 0, -(LOSE_STREAK_TO_DROP - 1), EASY_STREAK_TO_RAISE - 1,
+      )),
     },
     upgrades: {
       mana: Math.floor(num(upgrades['mana'], 0, 0, MANA_CAP_MAX_LV)),

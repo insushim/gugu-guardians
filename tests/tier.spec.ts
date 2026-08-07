@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MAX_TIER, EASY_STREAK_TO_RAISE, nextTier, tierAoe, tierAtk, tierBreakShare, tierTargetP,
+  MAX_TIER, EASY_STREAK_TO_RAISE, LOSE_STREAK_TO_DROP, nextTier, tierAoe, tierAtk, tierBreakShare, tierTargetP,
 } from '../src/sim/tier';
 import { Battle } from '../src/sim/core';
 import { stageDef } from '../src/sim/stages';
@@ -107,7 +107,10 @@ describe('단계 표', () => {
     const b = new Battle(stageDef(1), {}, { mana: 0 }, 3);
     expect(b.outcome.accuracy).toBe(0);
     expect(b.outcome.win).toBe(false);
-    expect(nextTier(3, 1, b.outcome).tier).toBe(2);   // 이기지 못했으니 내려간다
+    // 이기지 못했으니 올라가지 않는다. 다만 **한 판으로는 안 내려간다**(연패 2판 필요) —
+    // 아래 '한 번 지고는 안 내려간다' 참고.
+    expect(nextTier(3, 1, b.outcome).tier).toBe(3);
+    expect(nextTier(3, -1, b.outcome).tier).toBe(2);
   });
 });
 
@@ -133,14 +136,39 @@ describe('단계 조정 규칙 — 올릴 땐 천천히, 내릴 땐 즉시', () 
 
   it('압도(성 무피격 + 정답 90%↑)는 한 판으로 두 단계 오른다', () => {
     expect(nextTier(0, 0, dominant)).toEqual({ tier: 2, streak: 0 });
-    // 성이 한 대라도 맞았으면 압도가 아니다 — 여유 규칙(연승 필요)으로 떨어진다
-    expect(nextTier(0, 0, { ...dominant, castleLeft: 0.99 })).toEqual({ tier: 0, streak: 1 });
+    // 성이 한 대라도 맞았으면 압도가 아니다 — 여유 규칙(한 칸)으로 떨어진다
+    expect(nextTier(0, 0, { ...dominant, castleLeft: 0.99 })).toEqual({ tier: 1, streak: 0 });
     // 정답률이 90% 미만이어도 압도가 아니다
-    expect(nextTier(0, 0, { ...dominant, accuracy: 0.89 })).toEqual({ tier: 0, streak: 1 });
+    expect(nextTier(0, 0, { ...dominant, accuracy: 0.89 })).toEqual({ tier: 1, streak: 0 });
   });
 
-  it('한 판만 져도 바로 내려간다 (막힌 아이를 붙잡아 두지 않는다)', () => {
-    expect(nextTier(4, 1, loss)).toEqual({ tier: 3, streak: 0 });
+  /**
+   * 🔴 **이 테스트가 이 프로젝트에서 가장 자주 뒤집힌 규칙이다.** 예전 이름은
+   *    "한 판만 져도 바로 내려간다 (막힌 아이를 붙잡아 두지 않는다)"였다.
+   *    그 규칙 때문에 **벽이 존재할 수 없었다** — 벽에 부딪히면 벽이 스스로 낮아지므로,
+   *    사용자가 원한 재미("못 깨도 계속 도전하고 업그레이드하면서 못 깨던 판을 깨는 것")를
+   *    시스템이 정면으로 막고 있었다. 실사용자가 세 번 "너무 쉽다"를 보고했다.
+   *    지금은 **같은 난이도로 한 번 더** 붙어 볼 기회를 준다.
+   * 🔴 그래도 2연패면 내려간다 — 영영 막히는 아이를 만들지 않는다는 원칙은 그대로다.
+   */
+  it(`한 번 지고는 안 내려간다 — ${LOSE_STREAK_TO_DROP}연패라야 내려간다 (벽이 존재해야 한다)`, () => {
+    let s = { tier: 4, streak: 1 };
+    for (let i = 1; i < LOSE_STREAK_TO_DROP; i++) {
+      s = nextTier(s.tier, s.streak, loss);
+      expect(s.tier, `${i}연패에서 이미 내려갔다`).toBe(4);
+    }
+    s = nextTier(s.tier, s.streak, loss);
+    expect(s.tier).toBe(3);
+    expect(s.streak).toBe(0);
+  });
+
+  it('연패 도중에 한 판 이기면 연패 카운트가 끊긴다', () => {
+    const afterLoss = nextTier(4, 0, loss);          // 1연패 — 아직 4단계
+    expect(afterLoss.tier).toBe(4);
+    const afterWin = nextTier(afterLoss.tier, afterLoss.streak, narrow);
+    expect(afterWin.streak).toBe(0);                 // 음수 연패가 지워진다
+    // 다시 져도 그 한 판만으로는 안 내려간다
+    expect(nextTier(afterWin.tier, afterWin.streak, loss).tier).toBe(4);
   });
 
   it('아슬아슬하게 이기면 그 단계에 머문다 — 딱 맞는 난이도다', () => {

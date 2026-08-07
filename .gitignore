@@ -9,3 +9,4 @@ screenshots/
 
 # wrangler 로컬 개발 산출물(miniflare SQLite 상태 파일) — 커밋 대상 아님
 .wrangler/
+dist-kingsmath/

@@ -135,14 +135,18 @@ export const RESERVE_COVER = 0.85;
  *    테스트로는 규칙이 갈라져도 안 잡혀서, 게이트가 구버전 규칙으로 조용히
  *    초록불을 낼 수 있었다. tests/tier.spec.ts 가 이 함수의 **출력**을 대조한다.
  */
-export const EASY_STREAK_TO_RAISE = 2;
+export const EASY_STREAK_TO_RAISE = 1;
+export const LOSE_STREAK_TO_DROP = 2;
 export function nextTier(tier, streak, m) {
   const t = tclamp(tier);
-  if (!m.win) return { tier: tclamp(t - 1), streak: 0 };
+  if (!m.win) {
+    const s = Math.min(0, streak) - 1;      // 연패는 음수로 센다
+    return s <= -LOSE_STREAK_TO_DROP ? { tier: tclamp(t - 1), streak: 0 } : { tier: t, streak: s };
+  }
   // 압도(성 무피격 + 정답 90%↑)는 한 판으로 두 칸 — src/sim/tier.ts 의 dominant 와 1:1
   if (m.castleLeft >= 0.999 && m.accuracy >= 0.9) return { tier: tclamp(t + 2), streak: 0 };
   if (!(m.castleLeft >= 0.85 && m.accuracy >= 0.7)) return { tier: t, streak: 0 };
-  const s = streak + 1;
+  const s = Math.max(0, streak) + 1;
   return s >= EASY_STREAK_TO_RAISE ? { tier: tclamp(t + 1), streak: 0 } : { tier: t, streak: s };
 }
 

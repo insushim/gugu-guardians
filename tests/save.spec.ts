@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalize, migrate, defaultSave, randomNickname, SAVE_VERSION } from '../src/save/schema';
 import { CANNON_MAX_LV, MANA_CAP_MAX_LV, REGEN_MAX_LV } from '../src/sim/economy';
+import { EASY_STREAK_TO_RAISE, LOSE_STREAK_TO_DROP, nextTier } from '../src/sim/tier';
 import { DECK_SIZE } from '../src/sim/units';
 
 /**
@@ -216,5 +217,41 @@ describe('세이브 정규화', () => {
     const n = randomNickname(() => 0.5);
     expect(n).toMatch(/^\S+ \S+$/);
     expect(n.length).toBeLessThanOrEqual(20);
+  });
+
+  /**
+   * 🔴 실제로 한 번 당한 버그다. `streak` 은 양수(연승 대기)와 **음수(연패 대기)** 를
+   *    같은 칸에 담는데, 정규화 하한이 0 으로 박혀 있어서 **연패 카운트가 로드마다 지워졌다.**
+   *    그러면 "2연패라야 난이도가 내려간다"가 조용히 "안 내려간다"가 되어,
+   *    난이도 개편 전체가 새로고침 한 번에 무력화된다. 코드를 읽어서는 안 보이고
+   *    게임을 해도 티가 잘 안 난다 — 그래서 테스트로 박아 둔다.
+   */
+  describe('적응 난이도 연패 카운트', () => {
+    /** 🔴 normalize 는 `{version, data}` **파일 래퍼**를 받는다 — data 를 바로 주면 전부 기본값이 된다 */
+    const withStreak = (streak: number): number => normalize({
+      version: SAVE_VERSION,
+      data: { ...defaultSave(), challenge: { tier: 4, streak } },
+    }).challenge.streak;
+
+    it('연패 대기값(음수)이 저장·복구를 넘어 살아남는다', () => {
+      expect(withStreak(-1)).toBe(-1);
+    });
+
+    it('nextTier 가 만들지 않는 값은 잘라 낸다 (손상 세이브 방어)', () => {
+      expect(withStreak(-9)).toBe(-(LOSE_STREAK_TO_DROP - 1));
+      expect(withStreak(9)).toBe(EASY_STREAK_TO_RAISE - 1);
+      expect(withStreak(Number.NaN)).toBe(0);
+    });
+
+    it('정규화를 거친 값으로 이어서 굴려도 강등 시점이 같다', () => {
+      const loss = { win: false, castleLeft: 0, accuracy: 0.9 };
+      let s = { tier: 4, streak: 0 };
+      for (let i = 1; i <= LOSE_STREAK_TO_DROP; i++) {
+        s = nextTier(s.tier, s.streak, loss);
+        // 매 판 사이에 저장·복구가 끼어들어도(아이가 새로고침해도) 결과가 같아야 한다
+        s = { tier: s.tier, streak: withStreak(s.streak) };
+      }
+      expect(s.tier).toBe(3);
+    });
   });
 });

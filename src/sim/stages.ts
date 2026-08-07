@@ -77,7 +77,18 @@ export function allyGrowth(index: number): number {
   return Math.pow(1.13, Math.min(index, CAMPAIGN_STAGES) - 1);
 }
 
-/** 적 배율 — 캠페인까지는 아군 성장과 정확히 상쇄되고, 그 뒤부터 벌어진다 */
+/**
+ * 적 배율 — 캠페인까지는 아군 성장과 정확히 상쇄되고, 그 뒤부터 벌어진다.
+ *
+ * ⚠️ **캠페인 안에 경사를 넣으려다 되돌렸다(2026-08-07). 다시 시도하기 전에 이걸 읽을 것.**
+ *    "정답 80%·95% 아이가 ST1~ST30 전 판 승률 100%"라는 실측을 보고 캠페인 배율에
+ *    판당 ×1.032 경사를 넣었더니 **잘하는 아이는 여전히 100% 승, 못하는 아이만 무너졌다**
+ *    (정답 40% 패배율 38%→74%, 60% 아이 ST18 승률 90%→33%). ×1.012 로 낮춰도 방향은 같았다
+ *    (40% 아이 38%→61%).
+ *    이유는 tier.ts 머리말에 이미 적혀 있던 것과 같다 — **전역 배율은 강자에게 안 듣는다.**
+ *    잘 맞히면 셈력이 많아 유닛을 더 세우고, 적은 성문 앞에서 16대1로 죽을 뿐이다.
+ *    난이도를 아이별로 가르는 손잡이는 **적응 단계(tier)** 하나뿐이다 — 거기를 손대라.
+ */
 export function enemyMult(index: number): number {
   const over = Math.max(0, index - CAMPAIGN_STAGES);
   return allyGrowth(index) * Math.pow(ENDLESS_STEP, over);

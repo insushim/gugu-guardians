@@ -100,7 +100,19 @@ export interface MatchOutcome {
  *    아이가 벽을 만난다. 반대로 졌을 때는 다음 판에서 바로 물러나야 "막혔다"가 안 된다.
  *    비대칭이 의도다.
  */
-export const EASY_STREAK_TO_RAISE = 2;
+export const EASY_STREAK_TO_RAISE = 1;
+
+/**
+ * 연속 몇 번 져야 한 칸 내려가는가.
+ *
+ * 🔴 1 이었다 — **한 번 지면 곧바로 쉬워졌다.** 그래서 "못 깨던 판"이 존재할 수 없었다:
+ *    벽에 부딪히면 벽이 스스로 낮아진다. 사용자가 원한 재미("못 깨도 계속 도전하고
+ *    업그레이드하면서 못 깨던 판을 깨는 것")를 시스템이 정면으로 막고 있었던 셈이다.
+ *    2 로 두면 **같은 난이도로 한 번 더 붙어 볼 기회**가 생기고, 그 사이에 아이가
+ *    소환·강화로 전력을 올릴 여지가 생긴다.
+ * 🔴 그래도 2연패면 내려간다 — 영영 막히는 아이를 만들지 않는다는 원칙은 그대로다.
+ */
+export const LOSE_STREAK_TO_DROP = 2;
 
 /**
  * **압도** — 성이 한 대도 안 맞았고 거의 다 맞혔다. 이건 "여유"가 아니라 "구경"이라
@@ -117,11 +129,18 @@ function dominant(m: MatchOutcome): boolean {
 export function nextTier(tier: number, streak: number, m: MatchOutcome):
   { tier: number; streak: number } {
   const t = clampTier(tier);
-  if (!m.win) return { tier: clampTier(t - 1), streak: 0 };
+  if (!m.win) {
+    // 🔴 연패는 **음수**로 센다. 저장 칸을 늘리지 않으려고 한 칸을 양방향으로 쓴다 —
+    //    옛 세이브의 양수 streak 이 들어와도 `Math.min(0, …)` 이 0 으로 접어 안전하다.
+    const s = Math.min(0, streak) - 1;
+    return s <= -LOSE_STREAK_TO_DROP
+      ? { tier: clampTier(t - 1), streak: 0 }
+      : { tier: t, streak: s };          // 같은 난이도로 한 번 더 — 여기서 '못 깨던 판'이 생긴다
+  }
   if (dominant(m)) return { tier: clampTier(t + 2), streak: 0 };
   // 여유롭게 이겼다 = 성이 거의 안 깎였고 문제도 잘 맞혔다
   const comfortable = m.castleLeft >= 0.85 && m.accuracy >= 0.7;
   if (!comfortable) return { tier: t, streak: 0 };   // 딱 맞는 난이도 — 유지
-  const s = streak + 1;
+  const s = Math.max(0, streak) + 1;
   return s >= EASY_STREAK_TO_RAISE ? { tier: clampTier(t + 1), streak: 0 } : { tier: t, streak: s };
 }
