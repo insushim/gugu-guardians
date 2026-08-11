@@ -546,6 +546,14 @@ canvas#field { flex: 1 1 auto; display: block; width: 100%; height: 100%; image-
 .seal.miss { background: #c9bfb5; }
 .gain { text-align: center; }
 
+/* 판 보상 두 갈래 — 문제에서 온 몫과 별에서 온 몫을 나눠 보여 준다 */
+.ink-lines { display: grid; gap: 2px; justify-items: center; }
+.ink-lines .fine { font-weight: 700; }
+
+/* 패배 조언 — 나무라는 칸이 아니라 '다음에 할 일'이라 주(朱)가 아닌 청(靑)으로 둔다 */
+.advice { border-color: var(--cheong); background: #eef4fb; text-align: left; }
+.advice b { color: var(--cheong); display: block; margin-bottom: 4px; }
+
 /* ── 도감/오답봉인/리포트 ──────────────────────────────────────────── */
 .codex-wrap { display: grid; gap: 8px; }
 .codex-head { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
@@ -624,3 +632,15 @@ table.rep td.num { text-align: right; font-variant-numeric: tabular-nums; }
   color: #fff; background: rgba(20, 16, 14, .82); border-radius: 4px;
   padding: 1px 3px; line-height: 1;
 }
+
+/* 별 판정 기준 — 관문에서 '무엇을 하면 별 셋인가'를 숫자로 보여 준다 */
+.star-rule {
+  display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+  font-size: .82em; font-weight: 800; color: var(--meok-soft); margin: 2px 0 6px;
+}
+.star-rule span { background: #f2ead9; border: 2px solid #e0d7c9; border-radius: 999px; padding: 3px 10px; }
+
+/* 오늘 할 것 — 메뉴에서 '지금 하면 좋은 것' 하나만 제시한다(목록 아님) */
+.today { text-align: left; border-color: var(--nok); background: #eef7f2; margin: 10px auto; max-width: 460px; }
+.today b { display: block; color: #1d6b52; margin-bottom: 4px; }
+.today .btn { margin-top: 8px; }

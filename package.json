@@ -16,7 +16,8 @@
     "check:assets": "node tools/asset-check.mjs && node tools/asset-check.mjs public/assets",
     "qa:launch": "node tools/qa-launch.mjs",
     "check:layout": "node tools/layout-check.mjs",
-    "check:fullscreen": "node tools/fullscreen-check.mjs"
+    "check:fullscreen": "node tools/fullscreen-check.mjs",
+    "check:feature": "node tools/feature-check.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260728.1",

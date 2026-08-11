@@ -96,8 +96,9 @@ export const SWEEP_ATK = Number(process.env['GUGU_SWEEP_ATK'] ?? 1);   // 적 �
  * 신규 괴수를 넣고 게이트가 깨졌을 때 "어느 놈 때문인가"는 추측이 아니라 빼 보면 안다.
  */
 const SWEEP_SKIP = (process.env['GUGU_SWEEP_SKIP'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+const SWEEP_INK = Number(process.env['GUGU_SWEEP_INK'] ?? 1);
 export const SWEEPING = SWEEP_BUDGET !== 1 || SWEEP_CASTLE !== 1 || SWEEP_EVERY !== 1 || SWEEP_ATK !== 1
-  || SWEEP_SKIP.length > 0;
+  || SWEEP_INK !== 1 || SWEEP_SKIP.length > 0;
 if (SWEEPING) {
   console.log(`\n⚠️  스윕 모드 — 적 예산 ×${SWEEP_BUDGET} · 성 체력 ×${SWEEP_CASTLE} · 스폰간격 ×${SWEEP_EVERY} · 적공격 ×${SWEEP_ATK}${SWEEP_SKIP.length ? ` · 제외 ${SWEEP_SKIP.join(',')}` : ''}. 이 실행은 게이트가 아니다.\n`);
 }
@@ -267,6 +268,58 @@ export const regenMult = (lv) => 1 + REGEN_PER_LV * Math.max(0, Math.min(REGEN_M
 export const CANNON_PER_CORRECT = 0.07, CANNON_KNOCKBACK = 90;
 export const CANNON_MAX_LV = 5;
 export const cannonMult = (lv) => 0.6 + 0.14 * Math.max(0, Math.min(CANNON_MAX_LV, Math.floor(lv)));
+
+// ── 판 보상(먹물) — src/sim/economy.ts 의 matchInk 와 1:1 ─────────────────
+/** 스윕 전용 배율 — 설정되면 SWEEPING 이 켜져 이 실행은 게이트로 인정되지 않는다 */
+export const INK_PER_CORRECT = 3 * Number(process.env['GUGU_SWEEP_INK'] ?? 1);
+export const MATCH_INK_CAP = Math.round(180 * Number(process.env['GUGU_SWEEP_INK'] ?? 1));
+const MATCH_INK_SLOPE = 0.06;
+/** 맞힌 문제 수만큼 받는 먹물. **승패 무관** — 막힌 아이의 유일한 수입 경로다 */
+export function matchInk(correct, stage) {
+  const n = Math.max(0, Math.floor(correct));
+  const scale = 1 + (Math.min(Math.max(1, stage), CAMPAIGN_STAGES) - 1) * MATCH_INK_SLOPE;
+  return Math.min(MATCH_INK_CAP, Math.round(n * INK_PER_CORRECT * scale));
+}
+
+// 강화 비용 — src/sim/economy.ts 와 1:1 (재도전 루프 게이트가 '살 수 있는가'를 재려면 필요하다)
+export const MANA_CAP_MAX_LV_C = 6, REGEN_MAX_LV_C = 5, CANNON_MAX_LV_C = 5;
+export const manaCapCost = (lv) => (lv >= MANA_CAP_MAX_LV_C ? Infinity : Math.round(200 * Math.pow(1.45, lv) / 10) * 10);
+export const regenCost = (lv) => (lv >= REGEN_MAX_LV_C ? Infinity : Math.round(180 * Math.pow(1.45, lv) / 10) * 10);
+export const cannonCost = (lv) => (lv >= CANNON_MAX_LV_C ? Infinity : Math.round(260 * Math.pow(1.45, lv) / 10) * 10);
+
+// ── 소환(가챠) — src/meta/summon.ts 와 같은 규칙 ─────────────────────────
+export const SUMMON_COST = 120;
+export const PITY_LEGEND = 60;
+const RARITIES = ROSTER.rarities;
+const WEIGHT_TOTAL = RARITIES.reduce((s2, r) => s2 + r.weight, 0);
+
+/**
+ * 한 번 뽑는다. **G11(자력 탈출) 게이트 전용 모델**이다 —
+ * 화면 연출이나 조각 수치까지 재현하지 않고, "무엇을 갖게 되는가"만 맞춘다.
+ * 🔴 천장(60회 무전설이면 전설 확정)은 반영한다. 이게 없으면 운 나쁜 시드에서
+ *    게이트가 실제 게임보다 훨씬 가혹해져 오탐을 낸다.
+ */
+export function summonOnce(roster, state, rng) {
+  let rarity;
+  if (state.sinceLegend >= PITY_LEGEND - 1) {
+    rarity = 'legend';
+  } else {
+    let roll = rng() * WEIGHT_TOTAL;
+    for (const r of RARITIES) { roll -= r.weight; if (roll <= 0) { rarity = r.id; break; } }
+    rarity ??= RARITIES[0].id;
+  }
+  state.sinceLegend = rarity === 'legend' ? 0 : state.sinceLegend + 1;
+  const pool = ALLIES.filter((u) => u.rarity === rarity);
+  if (!pool.length) return null;
+  const u = pool[Math.floor(rng() * pool.length)];
+  // 이미 있으면 승급(조각 대신 레벨 한 칸으로 근사), 없으면 새로 얻는다
+  if (roster[u.id]) roster[u.id] = Math.min(maxLevelOf(rarity), roster[u.id] + 1);
+  else roster[u.id] = 1;
+  return u.id;
+}
+const maxLevelOf = (rid) => (RARITIES.find((r) => r.id === rid)?.maxLevel ?? 5);
+
+
 // 프로브 전용 보수 가정: 아이가 '다 찼다'를 알아채고 누르기까지의 지연(초)
 export const CANNON_REACT_SEC = 6;
 export const cannonDamage = (budget) => budget * 0.05;

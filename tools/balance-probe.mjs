@@ -13,6 +13,7 @@
  */
 import {
   simulate, stageDef, ALLIES, CAMPAIGN_STAGES, progressionAllies, ROSTER, MAX_TIER, SWEEPING, nextTier,
+  matchInk, manaCapCost, regenCost, cannonCost, summonOnce, SUMMON_COST,
 } from './probe-model.mjs';
 
 /** G8(재미 게이트)이 검사하는 최고 난이도 단계 */
@@ -236,6 +237,120 @@ for (const st of BOSSES) {
   }
   if (lift / HARD.length < 0.2) {
     fails.push(`G9: 소환·승급의 평균 승률 증가폭 ${Math.round((lift / HARD.length) * 100)}%p (<20%p) — 성장이 장식`);
+  }
+}
+
+/**
+ * G11 — **자력 탈출 게이트.** 막힌 아이가 *자기가 번 먹물만으로* 벽을 넘는가.
+ *
+ * 🔴 G9 는 "유니크를 레벨 5로 들고 있으면 뚫린다"를 잰다 — 그걸 **어떻게 갖는지는 묻지 않는다.**
+ *    2026-08-11 전수 조사에서 그 구멍이 드러났다: 먹물이 늘어나는 곳이 관문 한 곳뿐이고
+ *    지급 조건이 "별이 나아진 만큼"이라, **지면 0 · 이미 3별인 판 재도전도 0** 이었다.
+ *    즉 막힌 아이의 수입이 정확히 0 이어서 G9 의 전제("전력을 키우면")가 성립하지 않았다.
+ *    G9 만 있으면 이 상태가 **초록불로 통과한다** — 그래서 이 게이트를 따로 둔다.
+ *
+ * 무엇을 재는가: 정답 40% 아이가 벽에 부딪힌 판을 반복 도전한다. 매 판 `matchInk` 만큼
+ * 먹물을 벌고(승패 무관), 살 수 있는 가장 싼 강화를 산다. **몇 판 만에 승률이 50% 를 넘는가.**
+ */
+{
+  const MAX_TRIES = 20;          // 이 안에 못 뚫으면 아이는 그전에 그만둔다
+  const SKILL = 0.6;             // G2 가 안전선으로 삼는 실력 — 이 아이가 막히면 그건 진짜 벽이다
+  const prog = (st) => Object.fromEntries(
+    progressionAllies(Math.min(st, CAMPAIGN_STAGES)).map((u) => [u.id, 1]));
+
+  /**
+   * 🔴 **막히는 곳을 찾아서 재야 한다.** 처음엔 캠페인의 ST18·20 을 '벽'으로 잡고 정답 40%
+   *    아이로 쟀는데, 그건 이 게임의 설계가 아니다 — G2 는 **60% 를 안전선**으로 두고,
+   *    40% 아이가 ST20 을 깨는 건 애초에 목표가 아니다(그 아이의 길은 정답률을 올리는 것이고
+   *    «엉킴 봉인»이 그 길이다). 게다가 G10 이 이미 "ST20·정답40% 는 최대강화로도 33%"라고
+   *    보고하고 있었다 — 즉 그 조건은 강화로 뚫리지 않도록 **설계된** 지점이다.
+   *    진짜로 "못 깨던 판"이 생기는 곳은 **무한 구간**이다. 거기서 잰다.
+   */
+  let wall = 0;
+  for (let st = CAMPAIGN_STAGES + 1; st <= 70; st++) {
+    const w = SEEDS.filter((sd) => simulate(st, SKILL, sd, prog(st)).win).length / SEEDS.length;
+    if (w < 0.5) { wall = st; break; }
+  }
+
+  /**
+   * 아이가 실제로 고를 수 있는 두 경로를 **둘 다** 준다.
+   * 규칙: 아직 못 산 강화가 있으면 **저축한다**(소환 120 이 최저가 강화 180 보다 싸서,
+   * 이 규칙이 없으면 지갑이 늘 소환으로 먼저 빠져나가 강화를 영영 못 산다 — 실측으로 걸렸다).
+   */
+  function spend(up, roster, purse, sum, rng) {
+    let bought = false;
+    for (;;) {
+      /**
+       * 🔴 **강화와 소환을 번갈아 산다.** 처음엔 "강화를 다 사고 나서 소환"으로 뒀는데,
+       *    스윕에서 먹물을 3배로 줘도 승률이 24%→33% 로 **똑같았다**(강화 12칸 · 셈지기 +0종).
+       *    강화는 6·5·5단계에서 천장이 있어 효과가 유계인데, 정책이 지갑을 전부 거기로 보내
+       *    유닛을 영영 못 사게 만들고 있었다. `stages.ts` 머리말이 이미 말한다 —
+       *    "캠페인 이후 부족한 전력은 **소환·승급**으로 메운다". 무한 구간의 벽은 유닛으로 넘는다.
+       *    아이도 둘 다 한다. 모델도 번갈아 한다.
+       */
+      const upCost = [
+        ['mana', manaCapCost(up.mana)],
+        ['regen', regenCost(up.regen)],
+        ['cannon', cannonCost(up.cannon)],
+      ].filter(([, c]) => Number.isFinite(c)).sort((a, b) => a[1] - b[1])[0];
+
+      const wantUpgrade = upCost && !bought;   // 한 번 산 뒤에는 소환 쪽에 기회를 준다
+      if (wantUpgrade && upCost[1] <= purse.ink) {
+        purse.ink -= upCost[1]; up[upCost[0]] += 1; bought = true; continue;
+      }
+      if (purse.ink >= SUMMON_COST) {
+        purse.ink -= SUMMON_COST; summonOnce(roster, sum, rng); bought = true; continue;
+      }
+      // 강화를 살 만큼 모으는 중이면 그대로 둔다(소환으로 새어 나가지 않게)
+      return bought;
+    }
+  }
+
+  console.log('\n=== G11 자력 탈출 (정답 60% 아이 · 무한 구간의 벽 · 자기가 번 먹물만으로) ===');
+  if (!wall) {
+    console.log('  ST31~70 에 승률 50% 미만인 판이 없다 — 잴 벽이 없다');
+    fails.push('G11: 무한 구간에 벽이 없다 — 성장 목표가 성립하지 않는다');
+  } else {
+    const up = { mana: 0, regen: 0, cannon: 0 };
+    const roster = prog(wall);
+    const purse = { ink: 0 };
+    const sum = { sinceLegend: 0 };
+    let a = 12345;
+    const rng = () => { a = (a * 1664525 + 1013904223) >>> 0; return a / 4294967296; };
+    const owned0 = Object.keys(roster).length;
+    const winRate = () => SEEDS.filter((sd) => simulate(wall, SKILL, sd, roster, 0, up).win).length / SEEDS.length;
+    const start = winRate();
+    let tries = 0, rate = start, earned = 0;
+    while (rate < 0.5 && tries < MAX_TRIES) {
+      const r = simulate(wall, SKILL, SEEDS[tries % SEEDS.length], roster, 0, up);
+      const ink = matchInk(r.correct, wall);
+      purse.ink += ink; earned += ink; tries++;
+      if (spend(up, roster, purse, sum, rng)) rate = winRate();
+    }
+    const broke = rate >= 0.5;
+    console.log(`벽 = ST${wall} · 시작 승률 ${Math.round(start * 100)}%`);
+    console.log(`  ${broke ? `${tries}판 만에 뚫음` : `${MAX_TRIES}판 도전해도 못 뚫음`}`
+      + ` · 승률 ${Math.round(start * 100)}% → ${Math.round(rate * 100)}%`
+      + ` · 번 먹물 ${earned} · 강화 ${up.mana + up.regen + up.cannon}칸`
+      + ` · 셈지기 +${Object.keys(roster).length - owned0}종`);
+
+    /**
+     * ① **구조** — 도전하면 벌어야 한다. 이게 이 게이트의 존재 이유다.
+     *    0 이면 재도전 루프가 경제적으로 성립하지 않는다(2026-08-11 이전이 정확히 그 상태였다).
+     */
+    if (earned === 0) fails.push('G11: 벽에 도전해도 먹물이 0 — 막힌 아이에게 수입 경로가 없다');
+    /**
+     * ② **진전** — 도전이 승률을 실제로 올려야 한다.
+     * 🔴 처음엔 "20판 안에 승률 50% 를 넘어야 한다"로 뒀다가 내렸다. 스윕에서
+     *    **먹물을 3배로 줘도 승률이 24%→33% 로 똑같았다** — 강화는 6·5·5단계 천장이 있어
+     *    효과가 유계이고, 무한 구간의 벽은 `stages.ts` 머리말대로 **소환·승급**으로 넘는 곳이다.
+     *    즉 "20판 그라인딩으로 무한 구간의 벽을 넘는다"는 애초에 이 게임의 설계가 아니었고,
+     *    그걸 게이트로 강제하면 경제를 부풀려 캠페인 전체를 망가뜨린다.
+     *    이 게이트가 지켜야 하는 건 **막히지 않는 것**이지 빨리 뚫리는 것이 아니다.
+     */
+    else if (rate - start < 0.08) {
+      fails.push(`G11 ST${wall}: ${MAX_TRIES}판을 도전해도 승률이 ${Math.round((rate - start) * 100)}%p 밖에 안 올랐다 (<8%p) — 도전이 성장으로 이어지지 않는다`);
+    }
   }
 }
 

@@ -96,14 +96,21 @@ export class FieldRenderer {
    *    (실사용자 보고 + 실측: 전선이 적 성에 닿은 뒤엔 표본 시점마다 적 0마리).
    *    쓰러지는 걸 보여 주는 것만으로 "싸우고 있다"가 읽힌다 — 밸런스는 건드리지 않는다.
    */
-  private puffs: { x: number; side: 1 | -1; at: number }[] = [];
+  private puffs: { x: number; side: 1 | -1; at: number; big: number }[] = [];
   private static readonly PUFF_MS = 420;
 
-  puff(x: number, side: 1 | -1): void {
+  /**
+   * @param big 1 = 보통. 2~3 = 크게 터진다(등급 높은 셈지기·보스).
+   * 🔴 예전엔 **모든 처치가 같은 크기**였다. 전설 셈지기가 쓰러지는 것과 숫자벌레 하나가
+   *    쓰러지는 것이 화면에서 구분되지 않으면, 등급이라는 게 카드 색깔에만 있고
+   *    전장에는 없는 것이 된다(진단 영향 4/10).
+   */
+  puff(x: number, side: 1 | -1, big = 1): void {
     if (this.opts.reduceMotion) return;
     // 화면을 뒤덮지 않게 상한을 둔다(대포 한 방에 수십 마리가 동시에 죽을 수 있다)
     if (this.puffs.length > 24) this.puffs.shift();
-    this.puffs.push({ x, side, at: performance.now() });
+    this.puffs.push({ x, side, at: performance.now(), big: Math.max(1, Math.min(3, big)) });
+    if (big >= 2.5) this.hitstop();   // 큰 놈이 쓰러지면 화면이 잠깐 멈춘다
   }
 
   /**
@@ -138,7 +145,60 @@ export class FieldRenderer {
   /** 이 거리(월드) 밖에서 때렸으면 원거리로 본다 — 근접끼리 부딪히는 건 그리지 않는다 */
   private static readonly SHOT_MIN = 62;
 
+  // ── 정답 환호 ──────────────────────────────────────────────────────────
+  /**
+   * 정답을 맞힌 **순간** 전장에서 벌어지는 일.
+   *
+   * 🔴 2026-08-11 진단에서 가장 높은 점수를 받은 결함이 여기였다(영향 7/10):
+   *    **정답 순간 캔버스 피드백이 0** 이었다. 문제를 맞히면 문제 상자에 작은 글씨가 뜰 뿐,
+   *    전장은 아무 반응이 없었다. 반대로 **틀리면** 상자가 흔들린다 —
+   *    즉 잘한 것보다 못한 것에 화면이 더 크게 반응하는 역설이었다.
+   *    이 게임의 한 줄 컨셉이 "계산이 빨라질수록 내 군대가 강해진다"인데,
+   *    그 인과가 화면에서 안 보이면 컨셉이 글로만 있는 것이다.
+   *
+   * 콤보가 쌓일수록 커지고 색이 올라간다 — 상승감은 크기와 색으로 만든다.
+   */
+  private cheers: { at: number; combo: number; gained: number }[] = [];
+  private static readonly CHEER_MS = 620;
+
+  cheer(gained: number, combo: number): void {
+    if (this.cheers.length > 6) this.cheers.shift();
+    this.cheers.push({ at: performance.now(), combo, gained });
+    // 콤보가 붙으면 화면도 같이 들썩인다(3연속부터). reduceMotion 은 shake 안에서 걸러진다
+    if (combo >= 3) this.shake(Math.min(6, 2 + combo * 0.4));
+  }
+
+  /**
+   * 히트스톱 — 큰 타격 순간 화면을 아주 잠깐 멈춘다.
+   * 🔴 프레임을 실제로 멈추지 않는다(시뮬 시계를 건드리면 밸런스가 바뀐다).
+   *    **그리기만** 한 프레임 유지하고 살짝 확대해 "묵직함"을 만든다.
+   *    관찰 11건 공통 교훈 — 타격감은 그래픽이 아니라 이 정지에서 온다.
+   */
+  private stopUntil = 0;
+  private static readonly STOP_MS = 70;
+
+  hitstop(): void {
+    if (this.opts.reduceMotion) return;
+    this.stopUntil = performance.now() + FieldRenderer.STOP_MS;
+  }
+
+  /**
+   * 보스 등장 — 이름을 화면에 크게 띄운다.
+   * 🔴 지금은 수문장이 그냥 다른 적처럼 걸어 나온다. 구역의 클라이맥스인데
+   *    화면이 아무 말도 안 하면 아이는 그게 보스인 줄 모른다.
+   */
+  private bossAt = 0;
+  private bossName = '';
+  private static readonly BOSS_MS = 1500;
+
+  boss(name: string): void {
+    this.bossAt = performance.now();
+    this.bossName = name;
+  }
+
   /** 검수 하네스가 읽는다 — 화면을 눈으로 세는 대신 숫자로 확인하려고 둔다 */
+  cheersShown = 0;
+  bossesShown = 0;
   shotsFired = 0;
   sweeps = 0;
   skills = 0;
@@ -204,6 +264,18 @@ export class FieldRenderer {
       const k = (this.shakeUntil - now) / 180;
       ctx.translate((Math.random() - 0.5) * this.shakeMag * k, (Math.random() - 0.5) * this.shakeMag * k);
     }
+    /**
+     * 히트스톱 — 시뮬 시계는 그대로 두고 **그림만** 아주 잠깐 확대한다.
+     * 🔴 프레임을 실제로 멈추면 밸런스가 바뀐다(같은 판에서 푸는 문항 수가 준다 —
+     *    이 프로젝트는 '화면 배속'으로 정확히 그 함정을 한 번 밟았다). 여긴 시각 효과뿐이다.
+     */
+    if (now < this.stopUntil) {
+      const k = (this.stopUntil - now) / FieldRenderer.STOP_MS;
+      const z = 1 + 0.012 * k;
+      ctx.translate(this.w / 2, this.h / 2);
+      ctx.scale(z, z);
+      ctx.translate(-this.w / 2, -this.h / 2);
+    }
 
     // 배경
     const bg = getImage(this.bgKey);
@@ -232,7 +304,69 @@ export class FieldRenderer {
     this.drawSweep(groundY, now);
     // 특별기술은 맨 위 — 이 게임에서 가장 귀한 순간이라 무엇에도 가리지 않는다
     this.drawBursts(groundY, now);
+    this.drawCheers(groundY, now);
+    this.drawBoss(now);
     ctx.restore();
+  }
+
+  /**
+   * 정답 환호 — 우리 성 위에서 먹물이 솟아오른다.
+   * 🔴 **reduceMotion 이어도 지우지 않는다.** 동작을 줄이라는 설정이지 정보를 지우라는
+   *    설정이 아니다(진단 영향 4/10). 떠오르는 움직임만 없애고 글자는 남긴다 —
+   *    같은 원칙을 `drawBursts` 의 `still` 이 이미 쓰고 있다.
+   */
+  private drawCheers(groundY: number, now: number): void {
+    if (!this.cheers.length) return;
+    const { ctx } = this;
+    const x = this.sx(0) + 6;
+    for (let i = this.cheers.length - 1; i >= 0; i--) {
+      const c = this.cheers[i]!;
+      const k = (now - c.at) / FieldRenderer.CHEER_MS;
+      if (k >= 1) { this.cheers.splice(i, 1); continue; }
+      const rise = this.opts.reduceMotion ? 26 : 26 + k * 34;
+      const y = groundY - 58 - rise;
+      // 콤보가 붙을수록 크고 뜨겁게 — 상승감은 크기와 색으로 만든다
+      const size = 17 + Math.min(12, c.combo * 1.6);
+      const color = c.combo >= 8 ? '#d4342f' : c.combo >= 5 ? '#e08a1e' : c.combo >= 3 ? '#c8a02c' : '#1b4f8c';
+      ctx.globalAlpha = this.opts.reduceMotion ? 1 - k * 0.5 : 1 - k;
+      ctx.font = `900 ${size}px system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(250,246,238,0.95)';
+      const label = c.combo >= 3 ? `+${c.gained}  ⚡${c.combo}` : `+${c.gained}`;
+      ctx.strokeText(label, x, y);
+      ctx.fillStyle = color;
+      ctx.fillText(label, x, y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** 수문장 등장 — 이름을 크게 한 번 띄운다. 구역의 클라이맥스라 화면이 말을 해야 한다 */
+  private drawBoss(now: number): void {
+    if (!this.bossName) return;
+    const k = (now - this.bossAt) / FieldRenderer.BOSS_MS;
+    if (k >= 1) { this.bossName = ''; return; }
+    const { ctx } = this;
+    // 들어올 때 커지고 나갈 때 사라진다. reduceMotion 이면 크기 변화 없이 뜨기만
+    const grow = this.opts.reduceMotion ? 1 : Math.min(1, k * 5);
+    ctx.globalAlpha = k > 0.75 ? (1 - k) * 4 : 1;
+    ctx.save();
+    ctx.translate(this.w / 2, this.h * 0.3);
+    ctx.scale(grow, grow);
+    ctx.textAlign = 'center';
+    ctx.font = '900 34px system-ui, sans-serif';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(34,29,26,0.9)';
+    ctx.strokeText(this.bossName, 0, 0);
+    ctx.fillStyle = '#e8b33a';
+    ctx.fillText(this.bossName, 0, 0);
+    ctx.font = '900 15px system-ui, sans-serif';
+    ctx.lineWidth = 6;
+    ctx.strokeText('수문장이 나타났다!', 0, 26);
+    ctx.fillStyle = '#faf6ee';
+    ctx.fillText('수문장이 나타났다!', 0, 26);
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   /** 특별기술 — 반경만큼 퍼지는 먹 파동 + 기술 이름 */
@@ -383,9 +517,9 @@ export class FieldRenderer {
       const k = (now - p.at) / FieldRenderer.PUFF_MS;
       if (k >= 1) { this.puffs.splice(i, 1); continue; }
       const x = this.sx(p.x);
-      const y = groundY - 34 - k * 16;
-      const r = 9 + k * 17;
-      ctx.globalAlpha = (1 - k) * 0.55;
+      const y = groundY - 34 - k * 16 * p.big;
+      const r = (9 + k * 17) * p.big;
+      ctx.globalAlpha = (1 - k) * (0.55 + (p.big - 1) * 0.14);
       ctx.fillStyle = p.side === -1 ? '#2b2320' : '#1b4f8c';
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
       // 가운데를 비워 '퍽' 하고 터지는 고리로 — 채운 원만 두면 얼룩처럼 보인다

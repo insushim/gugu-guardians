@@ -110,6 +110,9 @@ export class Battle {
     /** 때린 쪽의 위치. 원거리 공격을 **날아가는 것**으로 그리려면 출발점이 필요하다.
      *  🔴 그리기 전용이다 — 시뮬 수치에는 쓰지 않는다. */
     from?: number;
+    /** 'die' 일 때만 — 쓰러진 놈의 덩치(1~3). 등급이 높을수록 크게 터진다.
+     *  🔴 그리기 전용. 시뮬 수치에는 쓰지 않는다. */
+    big?: number;
   }[] = [];
 
   /** 보유 셈지기의 승급 레벨 (id → level). 없으면 1로 본다. */
@@ -275,10 +278,43 @@ export class Battle {
     return gained;
   }
 
+  /**
+   * 패배 원인 진단용 계측 — 결과 화면이 "왜 졌는지"를 말하려면 전투가 신호를 남겨야 한다.
+   * 🔴 예전엔 결과 화면이 푼 문제 수와 시간만 보여 줬다. 아이는 진 이유를 모른 채
+   *    같은 덱으로 같은 판을 다시 눌렀고, 그건 도전이 아니라 반복이다.
+   * 🔴 판정이 아니라 **관측만** 한다. 무슨 말을 할지는 UI 가 정한다(여긴 DOM 을 모른다).
+   */
+  /** 가장 싼 셈지기조차 못 뽑을 만큼 셈력이 말라 있던 시간(초) */
+  drySec = 0;
+  /** 우리 성을 실제로 때린 적의 연인원 — 전선이 뚫린 정도 */
+  leaked = 0;
+
+  /**
+   * 이 덱에서 가장 싼 셈지기의 비용 — 마름 판정 기준.
+   * 🔴 기본값 0 이다(Infinity 아님). Infinity 면 `money < Infinity` 가 항상 참이라
+   *    덱을 안 넘긴 호출(테스트·프로브)에서 **판 전체가 마른 것으로 집계된다.**
+   *    안전한 쪽으로 실패하게 둔다 — 덱을 모르면 마름을 보고하지 않는다.
+   */
+  private cheapestCost = 0;
+
+  /**
+   * 이 판에 들고 나온 덱을 알려 준다. **진단 전용** — 시뮬 수치에는 일절 쓰이지 않는다.
+   * (안 부르면 마름 계측만 꺼지고 전투 결과는 완전히 동일하다.)
+   */
+  setDeck(ids: readonly string[]): void {
+    let min = Infinity;
+    for (const id of ids) {
+      const d = ALLY_BY_ID.get(id);
+      if (d) min = Math.min(min, d.cost);
+    }
+    this.cheapestCost = Number.isFinite(min) ? min : 0;
+  }
+
   /** 고정 타임스텝 1회 전진 */
   step(dt: number): void {
     if (this.status !== 'playing') return;
     this.t += dt;
+    if (this.money < this.cheapestCost) this.drySec += dt;
     this.money = Math.min(this.manaMax, this.money + baseRegen(this.stage.index) * this.regenMul * dt);
     this.hasteBoost = Math.max(0, this.hasteBoost - HASTE_DECAY * dt);
 
@@ -428,6 +464,7 @@ export class Battle {
           else this.playerCastleHp -= sw.dmg;
           u.atkAt = this.t + u.aspd / hs;
           u.swingAt = this.t;
+          if (u.side === -1) this.leaked++;   // 전선을 뚫고 성까지 온 적 — 진단 신호
           this.events.push({ type: 'castleHit', x: u.x, side: u.side });
           // 🔴 여기서도 기술 이벤트를 내보낸다. 배율만 적용하고 알리지 않으면,
           //    전선이 성문에 닿은 뒤로는 전설이 기술을 써도 화면에 아무 일도 안 일어난다 —
@@ -514,7 +551,12 @@ export class Battle {
     for (let i = this.units.length - 1; i >= 0; i--) {
       const u = this.units[i]!;
       if (u.hp <= 0) {
-        this.events.push({ type: 'die', x: u.x, side: u.side });
+        // 덩치 = 아군은 자리 수(등급이 곧 자리다), 적은 걸음이 느린 큰 놈일수록 크게.
+        // 🔴 그리기 전용이라 여기서 정해도 시뮬에 영향이 없다.
+        const big = u.side === 1
+          ? 1 + ((u.slots ?? 1) - 1) * 0.6
+          : (u.spd <= 0 ? 3 : u.maxHp >= 900 ? 2.2 : 1);   // 고정형(수문장) > 맷집 큰 놈 > 잡졸
+        this.events.push({ type: 'die', x: u.x, side: u.side, big });
         // 🔴 갈라져 나온 새끼는 **다시 갈라지지 않는다.** 새끼의 정의(e_splitlet)에 split 이
         //    없기 때문인데, 이건 데이터에 의존하는 안전장치라 눈에 안 보인다 —
         //    tests/sim.spec.ts 가 "분열은 한 세대에서 멈춘다"를 직접 검사한다.

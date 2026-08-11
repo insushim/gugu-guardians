@@ -5,9 +5,11 @@ import { installUnlockHooks, playBgm } from './render/audio';
 import { buildBattle, type BattleResult } from './ui/battle';
 import {
   menuScreen, mapScreen, prepScreen, gateScreen, resultScreen, summonScreen,
-  codexScreen, srsScreen, reportScreen, settingsScreen, boardScreen, type ResultPayload,
+  codexScreen, srsScreen, reportScreen, settingsScreen, boardScreen,
+  type ResultPayload, type GatePayload,
 } from './ui/screens';
 import { armAutoFullscreen } from './ui/fullscreen';
+import { matchInk } from './sim/economy';
 import * as store from './save/store';
 import { submitScore } from './net/board';
 import { weekKey, today } from './edu/date';
@@ -75,14 +77,21 @@ function go(screen: string, payload?: unknown): void {
         snapshotWeekly();
         // 순위 갱신은 동의했을 때만 나가고, 실패해도 조용히 넘어간다(게임을 막지 않는다)
         void submitScore();
+        /**
+         * 🔴 **판 보상은 승패와 무관하게 여기서 준다.** 관문(gate)은 이겨야 가는 곳이라
+         *    거기서만 주면 패배가 보상 0 이 되고, 그러면 막힌 아이는 전력을 올릴 방법이
+         *    영영 없다(순환). 맞힌 문제 수만큼 주므로 **진 판도 공부한 만큼은 남는다.**
+         */
+        const ink = matchInk(r.correct, r.stage);
+        if (ink > 0) store.update((d) => { d.currency.meokmul += ink; });
         // 이겼을 때만 봉인 해제(관문)로 간다. 졌으면 바로 결과 — 학습은 이미 전투 중에 했다.
-        if (r.status === 'win') go('gate', r);
-        else go('result', { ...r, starN: 0, gateCorrect: 0, gateTotal: 5 });
+        if (r.status === 'win') go('gate', { ...r, matchInk: ink });
+        else go('result', { ...r, starN: 0, gateCorrect: 0, gateTotal: 5, matchInk: ink });
       }));
       break;
     }
     case 'gate':
-      mount(root, () => gateScreen(go, payload as BattleResult));
+      mount(root, () => gateScreen(go, payload as GatePayload));
       break;
     case 'result':
       mount(root, () => resultScreen(go, payload as ResultPayload));

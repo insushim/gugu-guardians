@@ -31,6 +31,8 @@ import { weekKeyUTC, TOP_N } from '../../shared/board-contract';
 import type { BattleResult } from './battle';
 import type { RarityId } from '../sim/types';
 import type { SaveData } from '../save/schema';
+import { isDue } from '../edu/srs';
+import { daysBetween, today } from '../edu/date';
 
 type Go = (screen: string, payload?: unknown) => void;
 
@@ -53,6 +55,60 @@ function stat(k: string, v: string): HTMLElement {
 }
 
 // ── 메인 메뉴 ────────────────────────────────────────────────────────────
+/**
+ * 메뉴에 띄우는 **오늘 할 것** 한 줄.
+ *
+ * 🔴 메뉴가 누적 통계(깬 길·모은 별·셈지기 수)만 보여 주고 "오늘 뭘 하면 좋은지"는
+ *    한 마디도 없었다(진단 영향 4/10). 그리고 SRS 복습 예정일(`dueAt`)은 **계산은 되는데
+ *    어디에도 안 보였다**(영향 4/10) — 이미 있는 최고의 복귀 신호를 버리고 있었다.
+ *
+ * 🔴 **얻는 쪽으로만 쓴다.** 접속 연속일이나 "안 오면 잃는다" 같은 장치는 넣지 않는다.
+ *    아동 대상이라 손실 회피를 동력으로 쓰면 안 된다(교차검증에서도 부적절 판정).
+ *    여기서 하는 일은 "지금 하면 좋은 것"을 하나 골라 알려 주는 것뿐이다.
+ *
+ * 우선순위: 복습할 게 있으면 그것 → 새로 열린 판 → 다음 목표.
+ */
+function todayCard(d: SaveData, go: Go): HTMLElement | null {
+  const due = Object.values(d.edu.srs).filter((it) => isDue(it)).length;
+  if (due > 0) {
+    return el('div', { class: 'card today' },
+      el('b', {}, `오늘 풀 봉인이 ${due}개 있어요`),
+      el('div', { class: 'muted' }, '한 번 틀렸던 문제예요. 먼저 풀고 가면 전투가 쉬워져요.'),
+      btn('엉킴 봉인 풀기', () => go('srs'), 'btn nok'),
+    );
+  }
+  const next = d.progress.maxStage + 1;
+  if (next > CAMPAIGN_STAGES) {
+    /**
+     * 무한 구간에는 목표가 없었다(진단 영향 4/10) — 캠페인 끝이 곧 게임 끝처럼 보였다.
+     * 여기서 **자기 최고 기록**을 목표로 준다. 남과 겨루지 않고 어제의 자신과 겨룬다.
+     */
+    return el('div', { class: 'card today' },
+      el('b', {}, `가장 멀리 간 곳이 ${d.progress.maxStage}번째 길이에요`),
+      el('div', { class: 'muted' }, '한 걸음 더 가 보면 새 기록이 돼요. 진 판에서도 먹물은 남아요.'),
+      btn('더 멀리 가기', () => go('map'), 'btn ju'),
+    );
+  }
+  return el('div', { class: 'card today' },
+    el('b', {}, `${next}번째 길이 기다리고 있어요`),
+    el('div', { class: 'muted' }, '문제를 맞히면 셈력이 차오르고, 셈지기가 달려 나가요.'),
+    btn('이어서 하기', () => go('map'), 'btn ju'),
+  );
+}
+
+/**
+ * 복습 예정일을 저학년이 읽는 말로.
+ * 🔴 `2026-08-19` 같은 ISO 날짜가 그대로 화면에 나갔다(진단 영향 2/10).
+ *    2학년은 이 표기를 못 읽는다 — 이 프로젝트가 %·한자를 뺀 것과 같은 이유다.
+ */
+function dueLabel(due: string): string {
+  const n = daysBetween(today(), due);
+  if (n <= 0) return '오늘';
+  if (n === 1) return '내일';
+  if (n === 2) return '모레';
+  return `${n}일 뒤`;
+}
+
 export function menuScreen(go: Go): { node: HTMLElement } {
   const d = store.load();
   const clearedN = Object.keys(d.progress.cleared).length;
@@ -69,6 +125,7 @@ export function menuScreen(go: Go): { node: HTMLElement } {
         el('img', { src: assetUrl('crest_haetae'), alt: '' })),
       el('h1', { class: 'logo' }, '구구성 수호대'),
       el('p', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
+      ...(clearedN ? [todayCard(d, go)].filter((x): x is HTMLElement => x !== null) : []),
       clearedN
         ? el('div', { class: 'menu-progress' },
             stat('가장 멀리 간 길', best ? `${chapterOf(best)}구역 ${((best - 1) % CHAPTER_LEN) + 1}` : '—'),
@@ -222,7 +279,10 @@ export function prepScreen(go: Go, stageIndex: number): { node: HTMLElement } {
 }
 
 // ── 봉인 해제(L2 관문) ───────────────────────────────────────────────────
-export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; teardown?: Teardown } {
+/** 관문은 이긴 판만 온다. `matchInk` 는 전투 직후 이미 지급된 판 보상이라 여기선 표시용으로만 흘려보낸다 */
+export type GatePayload = BattleResult & { matchInk: number };
+
+export function gateScreen(go: Go, result: GatePayload): { node: HTMLElement; teardown?: Teardown } {
   const save = store.load();
   const stage = stageDef(result.stage);
   const TOTAL = 5;
@@ -320,7 +380,17 @@ export function gateScreen(go: Go, result: BattleResult): { node: HTMLElement; t
     el('div', { class: 'topbar' }, el('h1', {}, '봉인 해제'), el('span', { class: 'spacer' }), progress),
     el('div', { class: 'pane gate-wrap' },
       seals,
-      el('p', { class: 'muted' }, '엉킴괴수가 남긴 봉인이에요. 맞힐수록 별을 더 받아요.'),
+      /**
+       * 🔴 별 판정 기준이 **화면 어디에도 숫자로 없었다**(진단 영향 4/10).
+       *    "맞힐수록 별을 더 받아요"는 목표가 아니다 — 몇 개를 맞혀야 별 셋인지 모르면
+       *    아이는 조준할 수가 없다. 기준은 `finish()` 의 `correctN >= TOTAL ? 3 : >= 3 ? 2 : 1` 이다.
+       */
+      el('p', { class: 'muted' }, '엉킴괴수가 남긴 봉인이에요. 맞힌 개수만큼 별을 받아요.'),
+      el('div', { class: 'star-rule' },
+        el('span', {}, `${TOTAL}개 다 맞히면 ⭐⭐⭐`),
+        el('span', {}, '3개 이상 ⭐⭐'),
+        el('span', {}, '그 아래 ⭐'),
+      ),
       qLine, askLine, choices, fb,
     ),
   );
@@ -332,13 +402,67 @@ export interface ResultPayload extends BattleResult {
   starN: number;
   gateCorrect: number;
   gateTotal: number;
+  /** 별을 새로 얻은 만큼 받은 먹물(이긴 판만) */
   meokmul?: number;
+  /** 맞힌 문제 수만큼 받은 먹물 — **승패 무관**. 진 판에도 남는 몫이다 */
+  matchInk?: number;
   unlocked?: string[];
 }
 
+/**
+ * 이 판에서 받은 먹물. **두 갈래를 따로 보여 준다.**
+ * 🔴 진 판에도 `matchInk` 는 나온다 — 그 사실이 화면에 보여야 "졌지만 남는 게 있다"가 된다.
+ *    합쳐서 한 줄로 쓰면 아이는 그게 별에서 온 건지 문제에서 온 건지 모른다.
+ */
+function inkLines(r: ResultPayload): HTMLElement {
+  const rows: HTMLElement[] = [];
+  if (r.matchInk) rows.push(el('div', { class: 'ink big' }, `먹물 +${r.matchInk}`,
+    el('span', { class: 'muted fine' }, ` · 맞힌 문제 ${r.correct}개`)));
+  if (r.meokmul) rows.push(el('div', { class: 'ink big' }, `먹물 +${r.meokmul}`,
+    el('span', { class: 'muted fine' }, ' · 새로 얻은 별')));
+  if (!rows.length) return el('span', {}, '');
+  return el('div', { class: 'ink-lines' }, ...rows);
+}
+
+/**
+ * 왜 졌는지 **한 가지만** 짚고, 바로 할 수 있는 행동 하나를 준다.
+ *
+ * 🔴 아이는 진 이유를 모르면 같은 덱으로 같은 판을 다시 누른다. 그건 도전이 아니라 반복이다.
+ * 🔴 여러 이유를 나열하지 않는다 — 저학년에게 목록은 "무엇부터 해야 하지"를 만든다.
+ *    가장 큰 원인 하나만 고른다.
+ * 🔴 실패를 나무라지 않는다. 문장은 "무엇을 하면 되는지"로만 쓴다.
+ */
+function advice(r: ResultPayload): HTMLElement {
+  const acc = r.solved > 0 ? r.correct / r.solved : 0;
+  const dryShare = r.seconds > 0 ? r.drySec / r.seconds : 0;
+  let head = '다음엔 이렇게 해 봐요';
+  let body: string;
+
+  if (r.castleLeft > 0 && r.castleLeft <= 0.12) {
+    body = '거의 다 왔어요! 셈지기를 한 번만 더 키우면 넘을 수 있어요. 대장간이나 소환을 보고 오세요.';
+  } else if (dryShare >= 0.35) {
+    // 셈력이 말라 있던 시간이 판의 3분의 1을 넘었다 = 뽑고 싶어도 못 뽑았다
+    head = '셈력이 자주 비어 있었어요';
+    body = acc < 0.7
+      ? '문제를 맞히면 셈력이 차올라요. 천천히 읽고 맞히는 데 집중해 보세요.'
+      : '대장간에서 «셈력 샘»이나 «셈력 그릇»을 키우면 셈지기를 더 자주 낼 수 있어요.';
+  } else if (r.leaked >= 8) {
+    head = '적이 셈지기를 지나쳐 갔어요';
+    body = '멀리서 쏘는 셈지기나 발이 빠른 셈지기를 덱에 넣어 보세요. 출전 준비에서 바꿀 수 있어요.';
+  } else if (acc < 0.6) {
+    head = '문제를 더 맞히면 강해져요';
+    body = '이 게임의 힘은 정답에서 나와요. «엉킴 봉인»에서 틀렸던 문제를 먼저 풀고 오면 쉬워져요.';
+  } else {
+    body = '셈지기를 더 모으거나 키우면 넘을 수 있어요. 소환과 대장간을 보고 오세요.';
+  }
+
+  return el('div', { class: 'card advice' },
+    el('b', {}, head),
+    el('div', { class: 'muted' }, body),
+  );
+}
+
 export function resultScreen(go: Go, r: ResultPayload): { node: HTMLElement } {
-  const density = questionDensity(r.answerMs, r.seconds * 1000);
-  const acc = r.solved ? Math.round((r.correct / r.solved) * 100) : 0;
   const won = r.status === 'win';
   const next = won ? r.stage + 1 : null;
 
@@ -360,14 +484,16 @@ export function resultScreen(go: Go, r: ResultPayload): { node: HTMLElement } {
     ),
     el('div', { class: 'pane gate-wrap' },
       el('div', { class: 'stars-big' }, stars(r.starN)),
-      r.meokmul ? el('div', { class: 'ink big' }, `먹물 +${r.meokmul}`) : el('span', {}, ''),
+      inkLines(r),
       el('div', { class: 'result-stats' },
-        stat('푼 문제', `${r.solved}`),
-        stat('정답률', `${acc}%`),
-        stat('봉인 해제', `${r.gateCorrect}/${r.gateTotal}`),
+        stat('푼 문제', `${r.solved}문제`),
+        // 🔴 '정답률 87%' 였다. 백분율은 6학년 '비와 비율' 내용이라 2학년이 못 읽는다 —
+        //    이 프로젝트는 대장간에서 이미 같은 이유로 % 를 게이지로 바꿨는데 여기만 남아 있었다.
+        stat('맞힌 문제', `${r.correct}개 / ${r.solved}개`),
+        stat('봉인 해제', `${r.gateCorrect}개 / ${r.gateTotal}개`),
         stat('걸린 시간', `${Math.round(r.seconds)}초`),
-        stat('문제 시간 비율', `${Math.round(density * 100)}%`),
       ),
+      ...(won ? [] : [advice(r)]),
       ...(gained ? [gained] : []),
       // 🔴 난이도가 조용히 바뀌면 아이는 "왜 갑자기 어렵지"라고만 느낀다 —
       //    바뀐 사실과 이유를 말해 준다. 내려갈 때는 실패가 아니라 배려로 읽히게 쓴다.
@@ -701,7 +827,7 @@ export function srsScreen(go: Go): { node: HTMLElement } {
         el('td', {}, TYPE_BY_ID.get(t as QType)?.label ?? t ?? ''),
         el('td', {}, (body ?? '').replace('x', ' × ').replace('/', ' ÷ ')),
         el('td', {}, it.state),
-        el('td', { class: 'num' }, it.dueAt),
+        el('td', { class: 'num' }, dueLabel(it.dueAt)),
       );
     });
 

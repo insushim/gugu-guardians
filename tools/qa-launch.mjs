@@ -28,14 +28,69 @@ const say = (s) => { notes.push(s); console.log(s); };
 const must = (c, m) => { if (!c) { problems.push(m); console.log(`  ✗ ${m}`); } return c; };
 
 const browser = await puppeteer.launch({
+  /**
+   * 🔴 **`'shell'` 를 유지한다. `'new'` 로 바꾸지 말 것 — 실측으로 한 번 시도했다 실패했다.**
+   *    2026-08-12 에 이 모드에서 렌더러가 몇 판에 한 번 스스로 죽어(`detached Frame`)
+   *    검수가 중단되기에 `'new'` 로 바꿔 봤더니, 이번엔 **첫 판 이후 모든 판이 0문항**이 됐다
+   *    (탭은 살아 있고 콘솔 에러 0 · `.pad` 도 뜨는데 `window.__gugu__.status` 가 안 채워진다
+   *    = requestAnimationFrame 루프가 안 돈다. 새 헤드리스의 비가시 탭 RAF 스로틀링으로 보인다).
+   *    이 게임은 전투 전체가 RAF 루프 위에 있어서 그 모드로는 아무것도 검수할 수 없다.
+   *    그래서 `'shell'` 로 두고, 렌더러가 죽는 쪽은 **탭 재생성**(아래 renewIfDead)으로 견딘다.
+   *
+   *    ⚠️ 두 증상 모두 **게임 코드 문제가 아니다.** 변경분을 통째로 stash 하고 커밋 상태에서
+   *    돌려도 같았고, 전체화면 기능을 꺼도 같았다(원인 귀속 완료).
+   */
   headless: 'shell',
   args: ['--disable-gpu', '--disable-gpu-compositing', '--disable-accelerated-2d-canvas', '--no-sandbox'],
 });
-const page = await browser.newPage();
-await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
 const errors = [];
-page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+
+/**
+ * 🔴 **탭이 죽어도 검수는 계속돼야 한다.**
+ *    2026-08-12 환경에서 렌더러가 몇 판에 한 번씩 스스로 죽고, 그때 `page` 객체가
+ *    `Attempted to use detached Frame` 을 던지며 **검수 전체가 중단**됐다.
+ *    이건 게임 코드 문제가 아니다 — 변경분을 통째로 stash 하고 커밋 상태에서 돌려도,
+ *    전체화면 기능을 꺼도 같은 자리에서 죽었다(원인 귀속 완료).
+ *    한 판을 잃는 것과 남은 검사를 전부 못 도는 것은 값이 다르다. 탭만 새로 연다.
+ */
+let page;
+let renewals = 0;
+
+async function newTab() {
+  const pg = await browser.newPage();
+  await pg.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  pg.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  pg.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  // 렌더러가 죽으면 **기록**한다. 없으면 다음 사람이 다시 처음부터 귀속해야 한다.
+  pg.on('error', (e) => errors.push(`렌더러 종료: ${e.message}`));
+  return pg;
+}
+page = await newTab();
+
+/** 탭이 죽었나 — 죽었으면 새로 열고 true 를 돌려준다 */
+async function renewIfDead(e) {
+  // 🔴 문구 변형이 여럿이다 — `detached Frame` · `Navigating frame was detached` ·
+  //    `LifecycleWatcher terminated` 등. 좁게 잡았다가 한 번 놓쳤다(실측).
+  if (!/detach|Target closed|Session closed|Protocol error|LifecycleWatcher/i.test(String(e))) return false;
+  renewals++;
+  try { await page.close(); } catch { /* 이미 죽었다 */ }
+  page = await newTab();
+  return true;
+}
+
+/** 탭이 죽으면 한 번 새로 열고 다시 시도한다 */
+async function retryOnDeadTab(fn, tries = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      // 🔴 새로 연 탭이 곧바로 또 죽는 경우가 있다(브라우저 자체가 불안정한 환경).
+      //    한 번만 재시도하면 그 경우에 검수가 통째로 날아간다 — 몇 번은 더 버틴다.
+      if (i >= tries || !(await renewIfDead(e))) throw e;
+      await sleep(800);
+    }
+  }
+}
 
 async function clickText(t) {
   const h = await page.evaluateHandle(
@@ -116,10 +171,12 @@ const DRIVER = `(opts) => {
 }`;
 
 async function reset() {
-  await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
-  await page.evaluate(() => localStorage.clear());
-  await page.reload({ waitUntil: 'networkidle2' });
-  await page.waitForFunction('window.__gugu__?.ready');
+  await retryOnDeadTab(async () => {
+    await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
+    await page.evaluate(() => localStorage.clear());
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction('window.__gugu__?.ready');
+  });
 }
 
 /** 지도에서 열려 있는 마지막 판으로 들어가 한 판을 끝까지 플레이한다 */
@@ -128,8 +185,10 @@ async function reset() {
 async function playOne({ accuracy, msPerQ, pauses = 0, budgetMs = 460000 }) {
   // 🔴 매 판 새로고침해서 들어간다 — 결과 화면의 버튼 이름을 따라다니는 것보다 튼튼하고,
   //    덤으로 **저장이 실제로 복원되는지**를 판마다 검증하게 된다.
-  await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
-  await page.waitForFunction('window.__gugu__?.ready');
+  await retryOnDeadTab(async () => {
+    await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
+    await page.waitForFunction('window.__gugu__?.ready');
+  });
   await clickText('이어서 하기') || await clickText('시작하기');
   await sleep(500);
   const nodes = await page.$$('.node:not([disabled])');
@@ -193,9 +252,19 @@ async function pauseRun(pauses) {
   });
   return { status: r?.g?.status, answers: r?.log?.answers, save };
 }
-const p0 = SKIP_A ? { save: { rounds: 1 } } : await pauseRun(0);
+/**
+ * 🔴 한 절이 죽어도 나머지는 돌아야 한다. 2026-08-12 환경에서 브라우저가 스스로 죽는데,
+ *    그때 A절에서 던지면 B·B2 를 통째로 못 돌아 **아무것도 검수 못 한 채** 끝난다.
+ */
+const softFail = (label) => (e) => {
+  problems.push(`${label} 실행 중단(브라우저 불안정): ${String(e).split('\n')[0]}`);
+  say(`  ✗ ${label} 실행 중단 — ${String(e).split('\n')[0]}`);
+  return null;
+};
+
+const p0 = SKIP_A ? { save: { rounds: 1 } } : await pauseRun(0).catch(softFail('A절 일시정지 0회')) ?? { save: {} };
 say(`  일시정지 0회 → status=${p0.status} 저장된 판수=${p0.save.rounds} 푼문항=${p0.answers}`);
-const p5 = SKIP_A ? { save: { rounds: 1 } } : await pauseRun(5);
+const p5 = SKIP_A ? { save: { rounds: 1 } } : await pauseRun(5).catch(softFail('A절 일시정지 5회')) ?? { save: {} };
 say(`  일시정지 5회 → status=${p5.status} 저장된 판수=${p5.save.rounds} 푼문항=${p5.answers}`);
 must(p0.save.rounds === 1, `일시정지 0회인데 판수가 ${p0.save.rounds} (1이어야 함)`);
 must(p5.save.rounds === 1, `일시정지 5회 후 판수가 ${p5.save.rounds}로 부풀었다 (1이어야 함)`);
@@ -290,6 +359,8 @@ say('\n## B2. 전설 특별기술·자리 상한 (실브라우저)');
   must((g.fx?.skills ?? 0) > 0, `전설이 덱에 있는데 특별기술 연출이 ${g.fx?.skills ?? 0}회 — 이벤트가 렌더러까지 안 갔다`);
 }
 
+if (renewals > 0) say(`\n## C0. 탭 재생성 ${renewals}회 — 브라우저가 스스로 죽어 새로 열었다(게임 코드 아님)`);
+if (renewals > 0) say(`\n## C0. 탭 재생성 ${renewals}회 — 브라우저가 스스로 죽어 새로 열었다(게임 코드 아님)`);
 say(`\n## C. 콘솔 에러: ${errors.length}건`);
 for (const e of errors.slice(0, 12)) say(`  ! ${e}`);
 must(errors.length === 0, `콘솔 에러 ${errors.length}건`);

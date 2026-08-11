@@ -1,7 +1,7 @@
 import { nextTier } from '../sim/tier';
 import { Battle } from '../sim/core';
 import { stageDef, stageBackground, MAP_LEN, MAX_SEC } from '../sim/stages';
-import { ALLY_BY_ID, ALLY_CAP, slotsOf } from '../sim/units';
+import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, slotsOf } from '../sim/units';
 import { rarityColor } from './rarity';
 import { comboMul, hasteLabel, MIN_ANSWER_MS } from '../sim/economy';
 import { FieldRenderer } from '../render/field';
@@ -10,7 +10,7 @@ import { QuizSession } from '../edu/session';
 import type { Question } from '../edu/generator';
 import { el, btn, type Teardown } from './dom';
 import * as store from '../save/store';
-import { play } from '../render/audio';
+import { play, playCorrect, playLose, playBossAppear } from '../render/audio';
 import { bumpWeeklyNow } from '../meta/weekly';
 
 /**
@@ -38,6 +38,12 @@ export interface BattleResult {
   tier: number;
   /** 다음 판 난이도 — 달라졌으면 결과 화면이 알려 준다 */
   nextTier: number;
+  /** 우리 성이 얼마나 남았나 0~1 — 아깝게 졌는지 완패인지 */
+  castleLeft: number;
+  /** 가장 싼 셈지기조차 못 뽑을 만큼 셈력이 말라 있던 시간(초) */
+  drySec: number;
+  /** 전선을 뚫고 우리 성을 때린 적의 연인원 */
+  leaked: number;
 }
 
 export function buildBattle(stageIndex: number, deck: string[], onDone: (r: BattleResult) => void): { node: HTMLElement; teardown: Teardown } {
@@ -47,6 +53,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
   const levels: Record<string, number> = {};
   for (const [id, e] of Object.entries(save.roster)) levels[id] = e.level;
   const battle = new Battle(stage, levels, save.upgrades, save.challenge.tier);
+  battle.setDeck(deck);   // 진단 계측(셈력 마름)의 기준 — 전투 수치에는 영향 없다
   const quiz = new QuizSession({ layer: 'L1', types: stage.quizTypes, save, seed: Date.now() % 100000 });
 
   // ── DOM ────────────────────────────────────────────────────────────────
@@ -209,7 +216,11 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
     if (res.correct) {
       resolved = true;                       // 이 문제는 끝났다 — 재채점 금지
       const gained = battle.answer(true, ms, counts);
-      play('correct');
+      // 🔴 전장이 반응해야 한다. 예전엔 문제 상자만 반응하고 캔버스는 아무 일도 없었다 —
+      //    틀렸을 때는 상자가 흔들리는데 맞혔을 때는 화면이 조용한 역설이었다(진단 영향 7/10).
+      renderer.cheer(Math.round(gained), battle.combo);
+      renderer.cheersShown++;
+      playCorrect(battle.combo);
       qFb.className = 'fb ok';
       // 🔴 그릇이 꽉 차 실제로 못 받은 만큼을 "+46" 이라 적으면 아이에게 거짓말이 된다.
       //    answer() 가 돌려주는 값은 **실제로 담긴 양**이다.
@@ -294,12 +305,15 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
    *  원인 하나(일시정지 rAF 중복)는 togglePause 에서 막았지만, 종료는 저장에 쓰기까지 하는
    *  경로라 다른 이유로 두 번 들어와도 안전하도록 여기서도 잠근다(관문 화면과 같은 방식). */
   let finished = false;
+  /** 수문장 등장 연출을 한 판에 한 번만 띄우기 위한 표시 */
+  let bossShown = false;
 
   function finish() {
     if (finished) return;
     finished = true;
     cancelAnimationFrame(raf);
     if (battle.status === 'win') play('win');
+    else if (battle.status === 'lose') playLose();
     const nx = nextTier(save.challenge.tier, save.challenge.streak, battle.outcome);
     const r: BattleResult = {
       status: battle.status === 'playing' ? 'draw' : battle.status,
@@ -310,6 +324,9 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       answerMs: battle.answerMs,
       tier: battle.tier,
       nextTier: nx.tier,
+      castleLeft: battle.outcome.castleLeft,
+      drySec: battle.drySec,
+      leaked: battle.leaked,
     };
     store.update((d) => {
       d.edu.playMs += playMs;
@@ -348,7 +365,7 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       // 🔴 'die' 는 예전에 **아무도 안 읽었다** — 적이 나타나 0.3초 만에 사라져도 화면에
       //    아무 표시가 없어 "적이 안 나온다"로 보였다. 쓰러진 자리를 잠깐 남긴다.
       for (const e of battle.events) {
-        if (e.type === 'die') renderer.puff(e.x, e.side);
+        if (e.type === 'die') renderer.puff(e.x, e.side, e.big ?? 1);
         // 원거리 공격을 **날아가는 것**으로 그린다 — 시뮬은 즉시 체력을 깎으므로
         // 이 표시가 없으면 멀리서 때리는 셈지기가 뭘 하는지 화면에서 안 읽힌다
         else if (e.type === 'hit' && e.from !== undefined) renderer.shot(e.from, e.x, e.side);
@@ -369,6 +386,21 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       battle.events.length = 0;
     }
 
+    /**
+     * 수문장 등장 — 이 게임에서 **고정형(spd 0)은 수문장뿐**이라 이 조건으로 정확히 잡힌다.
+     * 🔴 예전엔 보스가 다른 적처럼 걸어 나왔다. 구역의 클라이맥스인데 화면이 아무 말도
+     *    안 하면 아이는 그게 보스인 줄 모른다(진단 영향 3/10).
+     */
+    if (!bossShown) {
+      const bu = battle.units.find((u) => u.side === -1 && u.spd <= 0 && u.hp > 0);
+      if (bu) {
+        bossShown = true;
+        renderer.boss(ENEMY_BY_ID.get(bu.defId)?.name ?? '수문장');
+        renderer.bossesShown++;
+        playBossAppear();
+        renderer.shake(8);
+      }
+    }
     renderer.draw(battle, ts);
     // 🔴 검수 하네스는 여기서 값을 읽는다. 화면 글자를 파싱하게 두면 표기를 바꾼 순간
     //    ("123" → "123 / 960") 검사가 NaN 으로 조용히 무너진다 — 실제로 한 번 그랬다.
@@ -392,7 +424,11 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       //    "난이도가 실제로 오르는가"를 측정할 방법이 없다(레벨은 프롬프트에 안 드러난다).
       q: current ? { key: current.key, type: current.type, level: current.level, dda: battle.dda.level } : null,
       // 연출이 실제로 났는지 — 캔버스를 눈으로 세는 대신 숫자로 확인한다
-      fx: { shots: renderer.shotsFired, sweeps: renderer.sweeps, skills: renderer.skills },
+      fx: {
+        shots: renderer.shotsFired, sweeps: renderer.sweeps, skills: renderer.skills,
+        // 타격감 개편(2026-08-12)이 실제로 화면에 닿았는지 — 하네스가 숫자로 확인한다
+        cheers: renderer.cheersShown, bosses: renderer.bossesShown,
+      },
       // 자리 상한이 실제로 걸리는지 하네스가 본다 — 순간값은 표본 시점에 이미 비어 있을 수 있다
       maxSlots: Math.max(Number(window.__gugu__?.['maxSlots'] ?? 0), battle.usedSlots),
     };

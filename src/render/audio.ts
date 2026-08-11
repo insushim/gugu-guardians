@@ -69,10 +69,25 @@ async function preload(): Promise<void> {
   );
 }
 
-export function play(name: Sfx): void {
+/**
+ * 재생 옵션.
+ * 🔴 **음정을 바꾸는 것만으로 소리가 6종에서 사실상 수십 종이 된다.** 새 오디오 파일을
+ *    구하지 않고 콤보 상승감·보스 등장·패배를 표현하려고 둔다(진단: 콤보 시청각 상승감 없음, 영향 6/10).
+ *    마리오의 연속 코인이 같은 원리다 — 같은 소리를 점점 높게.
+ */
+export interface PlayOpts {
+  /** 재생 속도 = 음정. 1 이 원음. 높을수록 높은 소리 */
+  rate?: number;
+  /** 음량 배율(0~1). 원래 볼륨에 곱한다 */
+  gain?: number;
+  /** 연타 방지 간격을 무시한다 — 콤보처럼 **연속으로 들려야 의미가 있는** 소리에 쓴다 */
+  force?: boolean;
+}
+
+export function play(name: Sfx, opts: PlayOpts = {}): void {
   if (!ctx || !store.load().settings.sound) return;
   const gap = MIN_GAP_MS[name];
-  if (gap) {
+  if (gap && !opts.force) {
     const now = performance.now();
     if (now - (lastPlayed.get(name) ?? -1e9) < gap) return;
     lastPlayed.set(name, now);
@@ -82,13 +97,34 @@ export function play(name: Sfx): void {
   try {
     const src = ctx.createBufferSource();
     src.buffer = buf;
+    // 0.5~2.0 밖으로 나가면 소리가 아니라 잡음이 된다
+    if (opts.rate) src.playbackRate.value = Math.max(0.5, Math.min(2, opts.rate));
     const g = ctx.createGain();
-    g.gain.value = VOLUME[name];
+    g.gain.value = VOLUME[name] * (opts.gain ?? 1);
     src.connect(g).connect(ctx.destination);
     src.start();
   } catch {
     /* 재생 실패는 무시 */
   }
+}
+
+/**
+ * 콤보에 따라 올라가는 정답음. 반음씩 올라가다 한 옥타브에서 멈춘다.
+ * 🔴 멈추는 게 중요하다 — 계속 올리면 20연속에서 삑 소리가 된다.
+ */
+export function playCorrect(combo: number): void {
+  const step = Math.min(12, Math.max(0, combo - 1));   // 반음 단위, 최대 한 옥타브
+  play('correct', { rate: Math.pow(2, step / 12), force: true });
+}
+
+/** 패배 — `wrong` 을 낮고 길게. 전용 파일 없이 '아쉬움'을 만든다 */
+export function playLose(): void {
+  play('wrong', { rate: 0.62, gain: 0.9, force: true });
+}
+
+/** 수문장 등장 — `summon` 을 아주 낮게. 큰 것이 왔다는 신호 */
+export function playBossAppear(): void {
+  play('summon', { rate: 0.55, gain: 1, force: true });
 }
 
 /** 앱 시작 시 1회 호출 — 첫 포인터/키 입력에서 언락한다 */
