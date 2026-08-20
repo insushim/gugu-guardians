@@ -338,8 +338,15 @@ say('\n## B2. 전설 특별기술·자리 상한 (실브라우저)');
   // 🔴 전설 id 를 손으로 적지 않는다 — 로스터가 바뀌면 조용히 없는 유닛을 쥐어 주게 된다
   const roster = JSON.parse(readFileSync(new URL('../data/roster.json', import.meta.url).pathname, 'utf8'));
   const LEGEND = roster.allies.find((u) => u.rarity === 'legend').id;
-  await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
-  await page.evaluate(() => localStorage.clear());
+  // 🔴 **여기도 retryOnDeadTab 으로 감싼다.** 이 파일 머리말이 "탭이 죽어도 검수는
+  //    계속돼야 한다"고 선언해 놓고 정작 B2 진입부(page.goto)는 맨몸이었다 — 앞 구간(B)에서
+  //    렌더러가 죽으면 죽은 page 로 goto 를 불러 **B2 이후 전 구간이 통째로 날아갔다**
+  //    (실측: 4판째에서 죽자 B2·C·D 를 한 줄도 못 돌고 프로세스가 예외로 종료).
+  //    한 판을 잃는 것과 남은 검사를 전부 못 도는 것은 값이 다르다는 그 원칙 그대로다.
+  await retryOnDeadTab(async () => {
+    await page.goto(URL_BASE, { waitUntil: 'networkidle2' });
+    await page.evaluate(() => localStorage.clear());
+  });
   // 전설 + 값싼 물량을 쥐어 주고 뒤쪽 판으로 들어간다(전설이 실제로 나갈 셈력이 있어야 한다)
   await page.evaluate((legend) => {
     const ids = ['jipsin', 'kkachi', 'musoe', 'onggi', 'bungbung', legend];

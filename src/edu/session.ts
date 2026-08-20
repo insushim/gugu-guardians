@@ -4,6 +4,7 @@ import { difficultyOf, exceedsGrade } from './curriculum';
 import { fromKey, generateFresh, makeRng, type Question, type Rng } from './generator';
 import { initialTheta, pickLevel, updateTheta } from './mastery';
 import { dueQueue, newItem, review, type SrsItem } from './srs';
+import { FAST_MS } from './stats';
 import { recordAnswer, emptyStat, type TypeStat } from './stats';
 import { today, type DayStr } from './date';
 import type { SaveData } from '../save/schema';
@@ -153,12 +154,25 @@ export class QuizSession {
     // 통계·SRS는 오염 여부와 무관하게 기록한다(리포트는 '실제로 무엇을 했는가'를 보여줘야 한다)
     this.save.edu.stats[q.type] = recordAnswer(stat, correct, elapsedMs);
     const item = this.save.edu.srs[q.key] ?? newItem(q.key, this.now);
-    this.save.edu.srs[q.key] = review(item, correct, this.now);
+    const after = review(item, correct, this.now);
+    /**
+     * 오늘의 임무가 읽는 두 계수기.
+     * 🔴 "봉인을 풀었다"는 **맞혔다**가 아니라 **단계가 올라갔다**로 센다 — 이미 완성한
+     *    문제를 또 맞히는 것은 복습이 아니고, 그걸 세면 쉬운 문제 반복이 임무 파밍이 된다.
+     */
+    if (after.state !== item.state || after.streak > item.streak) this.srsAdvanced++;
+    if (correct && elapsedMs <= FAST_MS) this.fastCorrect++;
+    this.save.edu.srs[q.key] = after;
     this.attemptsInSession++;
 
     const reveal = !correct && this.wrongOnCurrent >= 2;
     return { correct, reveal, answer: q.answer, hint: hintFor(q) };
   }
+
+  /** 이 판에서 단계가 오른 봉인 수 — 오늘의 임무용 */
+  srsAdvanced = 0;
+  /** 이 판에서 FAST_MS 안에 맞힌 수 — 오늘의 임무용 */
+  fastCorrect = 0;
 
   get answered(): number { return this.attemptsInSession; }
 }

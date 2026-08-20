@@ -7,13 +7,14 @@ import type { SrsItem, SrsState } from '../edu/srs';
 import type { TypeStat, WeeklySnapshot } from '../edu/stats';
 import { emptyStat } from '../edu/stats';
 import { today } from '../edu/date';
+import { DAILY_N, emptyDaily, type DailyState } from '../meta/daily';
 import { CANNON_MAX_LV, MANA_CAP_MAX_LV, REGEN_MAX_LV } from '../sim/economy';
 // 🔴 순위 서버와 **같은 파일**을 본다. 양쪽에 복붙하면 한쪽만 고쳤을 때
 //    특정 별명을 뽑은 아이의 제출만 조용히 거절된다(테스트가 길이 일치를 강제한다).
 import { UUID_RE, MAX as BOARD_MAX } from '../../shared/board-contract';
 
 export const SAVE_KEY = 'gugu:save';
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 /** 스테이지가 무한이라 상한이 없다 — 다만 손상 세이브가 무한 루프를 만들지 않도록 선은 둔다 */
 export const MAX_STAGE_KEY = 9999;
@@ -53,6 +54,11 @@ export interface SaveData {
     retentionLog: { key: string; matured: string; recheck: string; ok: boolean }[];
     rounds: number;
   };
+  /**
+   * 오늘의 임무 진행도. 임무 **내용**은 저장하지 않는다 — 날짜에서 결정론적으로 다시 만든다
+   * (src/meta/daily.ts). 저장이 커지지 않고, 임무 풀을 고쳐도 옛 세이브가 깨지지 않는다.
+   */
+  daily: DailyState;
   settings: { sound: boolean; music: boolean; fontScale: 1 | 1.2 | 1.5; reduceMotion: boolean };
   /**
    * 익명 주간 순위. 기본값은 **보내지 않음**이다(consent: false).
@@ -105,6 +111,7 @@ export function defaultSave(): SaveData {
     upgrades: { mana: 0, regen: 0, cannon: 0 },
     challenge: { tier: 0, streak: 0 },
     edu: { theta: {}, thetaWeekly: [], stats: {}, playMs: 0, diagnostics: [], srs: {}, retentionLog: [], rounds: 0 },
+    daily: emptyDaily(),
     settings: { sound: true, music: true, fontScale: 1, reduceMotion: false },
     board: { device: '', consent: false, week: '', correct: 0, stage: 0, playMs: 0 },
   };
@@ -166,6 +173,7 @@ export function normalize(input: unknown): SaveData {
   const challenge = isObj(d['challenge']) ? d['challenge'] : {};
   const edu = isObj(d['edu']) ? d['edu'] : {};
   const settings = isObj(d['settings']) ? d['settings'] : {};
+  const daily = isObj(d['daily']) ? d['daily'] : {};
   const board = isObj(d['board']) ? d['board'] : {};
 
   const cleared: Record<string, number> = {};
@@ -297,6 +305,21 @@ export function normalize(input: unknown): SaveData {
       fontScale,
       reduceMotion: bool(settings['reduceMotion'], false),
     },
+    daily: (() => {
+      // 🔴 길이를 **강제로 맞춘다.** 임무 수(DAILY_N)를 나중에 바꾸면 옛 세이브의 배열이
+      //    짧거나 길어지는데, 그대로 두면 `progress[i]` 가 undefined 가 되어 진행도가
+      //    NaN 으로 번진다. 화이트리스트 정규화의 원칙과 같다 — 모양을 여기서 확정한다.
+      const day = str(daily['date'], '');
+      const base = emptyDaily(day || today());
+      const nums = arr(daily['progress'], (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null));
+      const flags = arr(daily['claimed'], (x) => (typeof x === 'boolean' ? x : null));
+      return {
+        date: base.date,
+        progress: Array.from({ length: DAILY_N }, (_, i) => Math.max(0, Math.floor(nums[i] ?? 0))),
+        claimed: Array.from({ length: DAILY_N }, (_, i) => flags[i] ?? false),
+        bonus: bool(daily['bonus'], false),
+      };
+    })(),
     board: {
       // 🔴 device 는 UUID v4 형식만 남긴다. 형식이 틀리면 서버가 어차피 거절하므로
       //    여기서 지워서 다음에 정상적으로 다시 만들게 한다.
@@ -325,6 +348,9 @@ export function normalize(input: unknown): SaveData {
  *  - v5 는 `upgrades.regen`(셈력 샘)·`upgrades.cannon`(먹 대포)을 더한다. **둘 다 없으면 0** —
  *    기존 아이는 강화 0단계에서 시작한다. 대포 기본 위력을 낮췄으므로 이미 하던 아이는
  *    대포가 약해진 것을 체감하는데, 모아 둔 먹물로 바로 되살 수 있다(상점).
+ *  - v6 는 `daily`(오늘의 임무 진행도)를 더한다. **없으면 오늘 날짜의 빈 상태** — 기존 아이는
+ *    다음에 켤 때 오늘 임무를 처음부터 받는다. 임무 내용 자체는 저장하지 않으므로
+ *    (날짜에서 결정론적으로 생성) 임무 풀을 나중에 고쳐도 옛 세이브가 깨지지 않는다.
  *  - 클리어 기록·먹물·SRS·통계·θ 시계열은 그대로 보존된다.
  *
  * 🔴 단계별 함수로 쪼개지 않는 이유: 정규화가 이미 "어떤 입력에서도 유효한 v3"를 만든다.

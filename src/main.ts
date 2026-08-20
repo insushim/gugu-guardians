@@ -10,6 +10,7 @@ import {
 } from './ui/screens';
 import { armAutoFullscreen } from './ui/fullscreen';
 import { matchInk } from './sim/economy';
+import { bump, rollDaily } from './meta/daily';
 import * as store from './save/store';
 import { submitScore } from './net/board';
 import { weekKey, today } from './edu/date';
@@ -84,6 +85,20 @@ function go(screen: string, payload?: unknown): void {
          */
         const ink = matchInk(r.correct, r.stage);
         if (ink > 0) store.update((d) => { d.currency.meokmul += ink; });
+        /**
+         * 오늘의 임무 진행도 — **이기든 지든** 올린다. 판 보상과 같은 이유다:
+         * 막힌 아이에게도 오늘 할 것이 끝나야 한다. 'clear'(길 깨기)만 승리 조건이다.
+         */
+        store.update((d) => {
+          let s = rollDaily(d.daily);
+          s = bump(s, 'play', 1);
+          s = bump(s, 'correct', r.correct);
+          s = bump(s, 'combo', r.maxCombo);
+          s = bump(s, 'fast', r.fastCorrect);
+          s = bump(s, 'srs', r.srsAdvanced);
+          if (r.status === 'win') s = bump(s, 'clear', 1);
+          d.daily = s;
+        });
         // 이겼을 때만 봉인 해제(관문)로 간다. 졌으면 바로 결과 — 학습은 이미 전투 중에 했다.
         if (r.status === 'win') go('gate', { ...r, matchInk: ink });
         else go('result', { ...r, starN: 0, gateCorrect: 0, gateTotal: 5, matchInk: ink });

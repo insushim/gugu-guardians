@@ -1,7 +1,7 @@
 import type { BattleStatus, EnemyDef, LiveUnit, StageDef } from './types';
 import { ALLY_BY_ID, ALLY_CAP, ENEMY_BY_ID, levelMult, slotsOf } from './units';
 import { allyGrowth, enemyBudget, MAP_LEN, MAX_SEC } from './stages';
-import { clampTier, tierAoe, tierAtk, tierBreakShare, type MatchOutcome } from './tier';
+import { clampTier, tierAoe, tierAtk, tierBreakShare, tierVolume, type MatchOutcome } from './tier';
 import {
   baseRegen, cannonDamage, CANNON_CASTLE_SHARE, CANNON_KNOCKBACK, CANNON_PER_CORRECT, cannonMult,
   HASTE_DECAY, HASTE_MAX, HASTE_PER_CORRECT, hasteOf, manaCap, newDda, regenMult, rewardFor,
@@ -74,6 +74,8 @@ export class Battle {
   t = 0;
   money = START_MONEY;
   combo = 0;
+  /** 이 판에서 이어 붙인 **최고** 연속 정답 수 — 오늘의 임무가 읽는다 */
+  maxCombo = 0;
   dda: DdaState = newDda();
   units: LiveUnit[] = [];
   castleHp: number;
@@ -149,6 +151,10 @@ export class Battle {
       win: this.status === 'win',
       castleLeft: Math.max(0, this.playerCastleHp / this.stage.playerCastleHp),
       accuracy: this.solved > 0 ? this.correct / this.solved : 0,
+      // 🔴 평균 응답 시간 — 승격 속도를 정하는 두 번째 축이다(tier.ts 의 '완전 압도').
+      //    한 문제도 안 푼 판은 `undefined` 로 둔다: 0 을 내보내면 "무한히 빠름"으로 읽혀
+      //    문제를 안 푼 판이 네 칸 승격의 근거가 된다.
+      paceMs: this.solved > 0 ? this.answerMs / this.solved : undefined,
     };
   }
 
@@ -271,6 +277,7 @@ export class Battle {
       this.hasteBoost = Math.min(HASTE_MAX - 1, this.hasteBoost + HASTE_PER_CORRECT);
       this.cannonCharge = Math.min(1, this.cannonCharge + CANNON_PER_CORRECT);
       if (countsForCombo) this.combo++;
+      if (this.combo > this.maxCombo) this.maxCombo = this.combo;
     } else {
       this.combo = 0;
     }
@@ -337,17 +344,26 @@ export class Battle {
       // 🔴 `ceil` 만 쓰면 cap 1~3 에서 onTime === cap 이 되어 **예비대가 0기**가 된다
       //    (12판은 웨이브 8개 중 4개가 여기 걸렸다 — 주석은 "뒤쪽 25%"라는데 실제론 안 걸렸다).
       //    cap 1(수문장)은 시간표대로 나와야 하므로 예외로 두고, 2 이상은 최소 1기를 남긴다.
-      const onTime = s.cap <= 1 ? s.cap : Math.min(s.cap - 1, Math.ceil(s.cap * (1 - RESERVE_SHARE)));
+      // 🔴 난이도 단계발 **물량** 배율. 13단계부터만 1을 넘는다(tier.ts 의 VOL 참고) —
+      //    12단계까지는 정확히 s.cap 이라 G2 안전망 구간의 거동이 종전과 같다.
+      //    수문장(cap 1)은 배율을 안 먹인다. 보스를 여럿 세우는 건 다른 게임이 된다.
+      // 🔴 **수문장 판 전체가 물량 배율에서 빠진다.** 보스 판은 이미 예산의 125% 를 진다
+      //    (잡몹 BOSS_MOB_SHARE 0.75 + 보스 BOSS_SHARE 0.5). 여기에 잡몹 쪽만 배율을 곱하면
+      //    보스 몫과 겹쳐 난이도가 이중으로 뛴다 — 실측(정답95% 어른, 단계 16):
+      //      ST9 86% · ST10★ **38%** · ST11 76%   ← 보스 판만 40%p 꺼진 절벽
+      //    배율을 빼면 ST10★ 62%, 단계 18에서는 0% → 24%, ST30★ 52% → 81% 로 이어진다.
+      const cap = s.cap <= 1 || this.stage.boss ? s.cap : Math.round(s.cap * tierVolume(this.tier));
+      const onTime = cap <= 1 ? cap : Math.min(cap - 1, Math.ceil(cap * (1 - RESERVE_SHARE)));
       if (n >= onTime) {
         const progress = 1 - this.castleHp / this.stage.castleHp;
-        if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, s.cap - onTime)) {
+        if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, cap - onTime)) {
           // 🔴 여기서 `spawnNext` 를 미루면 안 된다. 미루면 진행도를 넘긴 뒤에도
           //    **다음 폴링(every 초)까지 기다리다**, 그 사이 판이 끝나면 영영 안 나온다
           //    (실측: COVER 0.9 에서 16기 중 2기가 끝내 미출전). 매 프레임 다시 본다.
           continue;
         }
       }
-      if (n < s.cap) {
+      if (n < cap) {
         const e = ENEMY_BY_ID.get(s.id);
         if (e) {
           // 수문장은 구역별 기본 체력 차이를 예산에 맞춰 보정한다(stages.ts 의 hpMul)

@@ -71,7 +71,7 @@ const WAVES = [
   ['e_sky',    12, FOREVER, 28, 22.0,  9.0, 0.05],
   ['e_knot',    9,      18, 30, 22.0,  9.0, 0.12],
   ['e_ghost',  15, FOREVER, 34, 26.0, 12.0, 0.06],
-  ['e_minus',  12,      20, 36, 26.0, 11.0, 0.10],
+  ['e_minus',  12,      20, 36, 26.0, 11.0, 0.05],
   ['e_dash',   13, FOREVER, 26, 18.0,  7.0, 0.04],
   ['e_shield', 16, FOREVER, 60, 45.0, 22.0, 0.14],
   ['e_armor',  18, FOREVER, 44, 30.0, 14.0, 0.06],
@@ -110,12 +110,13 @@ export const BUDGET_K = 2340 * SWEEP_BUDGET;
  * 적응형 전투 난이도 — src/sim/tier.ts 와 **1:1**. (tests/parity.spec.ts 가 값을 대조한다)
  * 🔴 0단계는 종전 밸런스와 완전히 같아야 한다: 배율 1.0 · 돌파 0 · 광역 0 · 목표정답률 0.85.
  */
-export const MAX_TIER = 12;
-export const TIER_ATK = [1.0, 1.9, 2.8, 3.8, 5.1, 6.8, 9.1, 12.2, 16.4, 22.1, 29.8, 40.2, 54.2];
-export const TIER_BREAK = [0, 0.26, 0.36, 0.43, 0.49, 0.55, 0.61, 0.67, 0.72, 0.77, 0.81, 0.85, 0.88];
-export const TIER_AOE = [0, 55, 75, 90, 105, 118, 132, 146, 160, 175, 190, 205, 220];
+export const MAX_TIER = 20;
+export const TIER_ATK = [1.0, 1.9, 2.8, 3.8, 5.1, 6.8, 9.1, 12.2, 16.4, 22.1, 29.8, 40.2, 54.2, 64.0, 75.5, 89.1, 105.1, 124.0, 146.3, 172.6, 203.7];
+export const TIER_VOL = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.16, 1.346, 1.561, 1.811, 2.101, 2.437, 2.827, 3.279];
+export const TIER_BREAK = [0, 0.26, 0.36, 0.43, 0.49, 0.55, 0.61, 0.67, 0.72, 0.77, 0.81, 0.85, 0.88, 0.898, 0.912, 0.923, 0.931, 0.937, 0.942, 0.946, 0.949];
+export const TIER_AOE = [0, 55, 75, 90, 105, 118, 132, 146, 160, 175, 190, 205, 220, 234, 247, 258, 268, 277, 285, 292, 298];
 export const TIER_TARGET_P =
-  [0.85, 0.84, 0.82, 0.81, 0.79, 0.78, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77];
+  [0.85, 0.84, 0.82, 0.81, 0.79, 0.78, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77, 0.77];
 const tclamp = (t) => Math.max(0, Math.min(MAX_TIER, Math.floor(Number.isFinite(t) ? t : 0)));
 
 // 성문 앞 통로 / 예비대 — src/sim/core.ts 와 1:1 (tests/tier.spec.ts 가 값을 대조한다)
@@ -138,14 +139,23 @@ export const RESERVE_COVER = 0.85;
  */
 export const EASY_STREAK_TO_RAISE = 1;
 export const LOSE_STREAK_TO_DROP = 2;
+export const FAST_PACE_MS = 1400;
 export function nextTier(tier, streak, m) {
   const t = tclamp(tier);
   if (!m.win) {
     const s = Math.min(0, streak) - 1;      // 연패는 음수로 센다
     return s <= -LOSE_STREAK_TO_DROP ? { tier: tclamp(t - 1), streak: 0 } : { tier: t, streak: s };
   }
-  // 압도(성 무피격 + 정답 90%↑)는 한 판으로 두 칸 — src/sim/tier.ts 의 dominant 와 1:1
-  if (m.castleLeft >= 0.999 && m.accuracy >= 0.9) return { tier: tclamp(t + 2), streak: 0 };
+  // 압도 = 성 무피격 + **그 단계 목표 정답률 +5%p** 이상. 절대값 0.9 가 아닌 이유는
+  // src/sim/tier.ts 의 dominant 주석 참고(단계가 오르면 문항이 어려워져 정답률이 같이 내려간다).
+  // 0단계에서는 0.85+0.05 = 0.90 이라 종전과 완전히 같다. — tier.ts 와 1:1
+  const dom = m.castleLeft >= 0.999 && m.accuracy >= TIER_TARGET_P[t] + 0.05;
+  // 승격 보폭: 압도 2칸 · 완전 압도(응답까지 빠름) 4칸. 천장에 가까울수록 감쇠 — raiseStep 과 1:1
+  const step = (want) => Math.max(1, Math.min(want, Math.ceil((MAX_TIER - t) / 3)));
+  if (dom && m.paceMs !== undefined && m.paceMs > 0 && m.paceMs <= FAST_PACE_MS) {
+    return { tier: tclamp(t + step(4)), streak: 0 };
+  }
+  if (dom) return { tier: tclamp(t + step(2)), streak: 0 };
   if (!(m.castleLeft >= 0.85 && m.accuracy >= 0.7)) return { tier: t, streak: 0 };
   const s = Math.max(0, streak) + 1;
   return s >= EASY_STREAK_TO_RAISE ? { tier: tclamp(t + 1), streak: 0 } : { tier: t, streak: s };
@@ -384,7 +394,13 @@ export function buildDeck(owned) {
  *      (교차검증 지적: 최대 강화 시 대포 2.17배·샘 1.4배인데 그 상태의 승률이 미측정).
  *      그래서 인자로 열어 두고, balance-probe 의 G10 이 최대 강화 상태를 따로 잰다.
  */
-export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {}) {
+export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {}, pace = 1) {
+  /**
+   * 🔴 `pace` = 응답 속도 배율(1 = 기존 아이 모델, 0.4 = 2.5배 빠른 풀이자).
+   *    셈력은 정답에서 나오므로 **속도가 곧 수입**이다. 이 축이 없던 동안
+   *    프로브는 '가장 빠른 플레이어 = 문항당 2.3초'만 알고 있었고,
+   *    그보다 빠른 실사용자(어른·숙달 아동)는 게이트가 한 번도 본 적이 없다.
+   */
   const T = tclamp(tier);
   /**
    * 🔴 목표 정답률을 낮추면 **같은 아이의 실제 정답률이 내려간다.** 문항이 더 어려워지니까.
@@ -417,6 +433,8 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {
   let combo = 0;
   let nextQuizAt = 1.5;
   let solved = 0, correct = 0;
+  /** 응답 시간 누적(ms) — 승격 신호(paceMs)의 재료. src/sim/core.ts 의 answerMs 와 1:1 */
+  let answerMs = 0;
   let wrongStreak = 0, rightStreak = 0, ddaLevel = 0;
   let myCastle = def.playerCastleHp;
   let enCastle = def.castleHp;
@@ -498,12 +516,14 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {
         combo++;
         wrongStreak = 0; rightStreak++;
         if (rightStreak >= 3 && ddaLevel > 0) { ddaLevel--; rightStreak = 0; }
-        nextQuizAt = t + tOk(accEff);
+        answerMs += tOk(accEff) * pace * 1000;
+        nextQuizAt = t + tOk(accEff) * pace;
       } else {
         combo = 0;
         rightStreak = 0; wrongStreak++;
         if (wrongStreak >= 2 && ddaLevel < DDA_MAX) { ddaLevel++; wrongStreak = 0; }
-        nextQuizAt = t + tBad(accEff);
+        answerMs += tBad(accEff) * pace * 1000;
+        nextQuizAt = t + tBad(accEff) * pace;
       }
     }
     // 2) 자동 수급(학습을 전혀 안 해도 진행은 되게 하는 바닥선)
@@ -571,15 +591,17 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {
         // 🔴 `ceil` 만 쓰면 cap 1~3 에서 onTime === cap 이 되어 **예비대가 0기**가 된다
         //    (12판은 웨이브 8개 중 4개가 여기 걸렸다 — 주석은 "뒤쪽 25%"라는데 실제론 안 걸렸다).
         //    cap 1(수문장)은 시간표대로 나와야 하므로 예외로 두고, 2 이상은 최소 1기를 남긴다.
-        const onTime = s.cap <= 1 ? s.cap : Math.min(s.cap - 1, Math.ceil(s.cap * (1 - RESERVE_SHARE)));
+        // 물량 배율 — 수문장 판은 통째로 예외. src/sim/core.ts 와 1:1
+        const scap = s.cap <= 1 || def.boss ? s.cap : Math.round(s.cap * TIER_VOL[T]);
+        const onTime = scap <= 1 ? scap : Math.min(scap - 1, Math.ceil(scap * (1 - RESERVE_SHARE)));
         if (n >= onTime) {
           const progress = 1 - enCastle / def.castleHp;
-          if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, s.cap - onTime)) {
+          if (progress < RESERVE_COVER * (n - onTime + 1) / Math.max(1, scap - onTime)) {
             // 미루지 않는다 — src/sim/core.ts 와 동일(진행도를 넘긴 즉시 나와야 한다)
             continue;
           }
         }
-        if (n < s.cap) {
+        if (n < scap) {
           const e = ENEMY_BY_ID[s.id];
           // 돌파형 판정은 난수가 아니라 스폰 순번으로 균등 배분(src/sim/core.ts breakerRoll 과 동일)
           const share = TIER_BREAK[T];
@@ -674,9 +696,9 @@ export function simulate(st, accuracy, seed = 1, roster = null, tier = 0, up = {
       units.splice(i, 1);
     }
     if (born.length) units.push(...born);
-    if (enCastle <= 0) return { win: true, time: t, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp) };
-    if (myCastle <= 0) return { win: false, time: t, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, myCastleLeft: 0 };
+    if (enCastle <= 0) return { win: true, time: t, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, paceMs: solved > 0 ? answerMs / solved : undefined, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp) };
+    if (myCastle <= 0) return { win: false, time: t, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, paceMs: solved > 0 ? answerMs / solved : undefined, myCastleLeft: 0 };
     t += DT;
   }
-  return { win: false, time: MAX_SEC, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp), timeout: true };
+  return { win: false, time: MAX_SEC, solved, correct, maxAllyX, maxAllies, maxSlots, fired, spawnLog, paceMs: solved > 0 ? answerMs / solved : undefined, myCastleLeft: Math.max(0, myCastle / def.playerCastleHp), timeout: true };
 }

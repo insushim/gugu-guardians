@@ -641,6 +641,26 @@ table.rep td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .star-rule span { background: #f2ead9; border: 2px solid #e0d7c9; border-radius: 999px; padding: 3px 10px; }
 
 /* 오늘 할 것 — 메뉴에서 '지금 하면 좋은 것' 하나만 제시한다(목록 아님) */
-.today { text-align: left; border-color: var(--nok); background: #eef7f2; margin: 10px auto; max-width: 460px; }
+.today { text-align: left; border-color: var(--nok); background: #eef7f2; margin: 10px auto; width: 100%; max-width: 460px; }
 .today b { display: block; color: #1d6b52; margin-bottom: 4px; }
 .today .btn { margin-top: 8px; }
+
+/* 오늘의 임무 — 세 줄 목록. 끝난 줄도 지우지 않고 남겨 둔다(오늘 얼마나 남았는지 보이도록) */
+/* 🔴 너비를 `.today` 와 같은 규칙으로 둔다 — 두 카드가 세로로 붙어 있어서
+   폭이 다르면 정렬이 어긋나 보인다(실측 스크린샷에서 67px 차이). */
+.quests { text-align: left; margin: 10px auto; width: 100%; max-width: 460px; }
+.quests > b { display: block; margin-bottom: 6px; }
+.quest {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; border-top: 1px solid rgba(0, 0, 0, .07);
+  font-size: calc(0.95rem * var(--fs, 1));
+}
+.quest:first-of-type { border-top: 0; }
+.q-mark { flex: 0 0 auto; }
+.q-text { flex: 1 1 auto; }
+/* 🔴 숫자는 폭이 흔들리면 세 줄이 들쭉날쭉해 보인다 — 오른쪽 정렬 + 고정폭 숫자 */
+.q-num { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--meok-soft); }
+.quest.done .q-text { color: #1d6b52; }
+.quest.done .q-num { color: #1d6b52; font-weight: 700; }
+.quests .btn { margin-top: 8px; width: 100%; }
+.quests .fine { margin-top: 6px; }

@@ -44,6 +44,12 @@ export interface BattleResult {
   drySec: number;
   /** 전선을 뚫고 우리 성을 때린 적의 연인원 */
   leaked: number;
+  /** 이 판의 최고 연속 정답 — 오늘의 임무용 */
+  maxCombo: number;
+  /** 이 판에서 빠르게(FAST_MS 이내) 맞힌 수 — 오늘의 임무용 */
+  fastCorrect: number;
+  /** 이 판에서 단계가 오른 엉킴 봉인 수 — 오늘의 임무용 */
+  srsAdvanced: number;
 }
 
 export function buildBattle(stageIndex: number, deck: string[], onDone: (r: BattleResult) => void): { node: HTMLElement; teardown: Teardown } {
@@ -327,6 +333,9 @@ export function buildBattle(stageIndex: number, deck: string[], onDone: (r: Batt
       castleLeft: battle.outcome.castleLeft,
       drySec: battle.drySec,
       leaked: battle.leaked,
+      maxCombo: battle.maxCombo,
+      fastCorrect: quiz.fastCorrect,
+      srsAdvanced: quiz.srsAdvanced,
     };
     store.update((d) => {
       d.edu.playMs += playMs;

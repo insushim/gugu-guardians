@@ -13,7 +13,7 @@
  */
 import {
   simulate, stageDef, ALLIES, CAMPAIGN_STAGES, progressionAllies, ROSTER, MAX_TIER, SWEEPING, nextTier,
-  matchInk, manaCapCost, regenCost, cannonCost, summonOnce, SUMMON_COST,
+  matchInk, manaCapCost, regenCost, cannonCost, summonOnce, SUMMON_COST, tOk,
 } from './probe-model.mjs';
 
 /** G8(재미 게이트)이 검사하는 최고 난이도 단계 */
@@ -147,6 +147,7 @@ for (const st of BOSSES) {
         ({ tier, streak } = nextTier(tier, streak, {
           win: r.win, castleLeft: r.myCastleLeft,
           accuracy: r.solved > 0 ? r.correct / r.solved : 0,
+          paceMs: r.paceMs,
         }));
       }
     }
@@ -443,6 +444,72 @@ console.log(`  [G6 설계 제약] ${G6_VERDICT}`);
 
 // ── 무한 구간 관측 (게이트 아님) ──────────────────────────────────────────
 // 여기서 보는 것: "소환으로 전력을 키우면 실제로 더 멀리 가는가". 아니면 소환이 장식이 된다.
+/**
+ * G12 속도 게이트 — **빠른 풀이자에게 천장이 있는가.**
+ *
+ * 🔴 왜 게이트가 되어야 하나: 2026-08-20 이전의 프로브는 실력을 *정답률 하나*로만 봤다.
+ *    응답 시간은 `tOk(acc)=2.3+(1-acc)*2.4` 라 **가장 빠른 플레이어조차 문항당 2.3초**였고,
+ *    구구단을 1초에 답하는 사람(어른·숙달 아동)은 이 파일이 한 번도 본 적이 없었다.
+ *    그래서 G8 이 "정답 95% 아이 패배율 40%" 라고 초록불을 켜는 동안 실사용자는
+ *    같은 빌드를 네 번에 걸쳐 "너무 쉽다"고 보고했다. 당시 실측: 어른 패배율 3% ·
+ *    성 피격률 6% · **단계를 최고치에 못 박아도 승률 99%.**
+ *    G8 은 이 구간을 구조적으로 못 본다 — 그래서 축이 하나 더 필요하다.
+ *
+ * 🔴 이 게이트가 지키는 계약은 두 가지뿐이다:
+ *    (a) 빠른 풀이자도 **진다** — 난이도 천장이 실재한다.
+ *    (b) 그래도 **아예 막히지는 않는다** — 벽이지 절벽이 아니다.
+ */
+{
+  console.log('\n=== G12 속도 게이트 (같은 정답률, 속도만 다름 · 적응 루프 30판) ===');
+  const playPace = (skill, pace) => {
+    let lost = 0, touched = 0, n = 0, tierSum = 0;
+    for (const seed of SEEDS) {
+      let tier = 0, streak = 0;
+      for (let st = 1; st <= CAMPAIGN_STAGES; st++) {
+        const r = simulate(st, skill, seed * 31 + st, null, tier, {}, pace);
+        tierSum += tier; n++;
+        if (!r.win) lost++;
+        if (r.myCastleLeft < 0.999) touched++;
+        ({ tier, streak } = nextTier(tier, streak, {
+          win: r.win, castleLeft: r.myCastleLeft,
+          accuracy: r.solved > 0 ? r.correct / r.solved : 0,
+          paceMs: r.paceMs,
+        }));
+      }
+    }
+    return { lost: lost / n, touched: touched / n, tier: tierSum / n };
+  };
+  // pace = 응답 시간 배율(1.0 = 종전 모델 ≈ 2.4초/문항, 0.42 ≈ 1.0초/문항)
+  const PACES = [['보통 아이', 1.00], ['빠른 아이', 0.70], ['숙달 아동', 0.55], ['어른', 0.42]];
+  console.log('사람\t\t문항당\t머문 단계\t패배율\t성 피격률');
+  const rows = PACES.map(([label, pace]) => ({ label, pace, ...playPace(0.95, pace) }));
+  for (const r of rows) {
+    console.log(`${r.label}\t${(tOk(0.95) * r.pace).toFixed(1)}s\t${r.tier.toFixed(1)}\t\t`
+      + `${Math.round(r.lost * 100)}%\t${Math.round(r.touched * 100)}%`);
+  }
+  for (const r of rows) {
+    // (a) 천장이 있는가 — 빠른 사람도 꾸준히 져야 한다
+    if (r.lost < 0.15) {
+      fails.push(`G12-a ${r.label}(${(tOk(0.95) * r.pace).toFixed(1)}s/문항) 패배율 ${Math.round(r.lost * 100)}% (<15%) — 빠른 풀이자에게 천장이 없다`);
+    }
+    if (r.touched < 0.15) {
+      fails.push(`G12-a ${r.label} 성 피격률 ${Math.round(r.touched * 100)}% (<15%) — 위협받지 않는다`);
+    }
+    // (b) 절벽은 아닌가
+    if (r.lost > 0.62) {
+      fails.push(`G12-b ${r.label} 패배율 ${Math.round(r.lost * 100)}% (>62%) — 벽이 아니라 절벽이다`);
+    }
+  }
+  /**
+   * (c) **속도가 실제로 난이도를 가르는가.** 같은 정답률에서 빠른 사람이 더 높은 단계에
+   *     앉아야 이 축이 작동하는 것이다. 이게 깨지면 위 두 검사가 우연히 통과할 수 있다.
+   */
+  const slow = rows[0], fast = rows[rows.length - 1];
+  if (fast.tier <= slow.tier + 2) {
+    fails.push(`G12-c 어른(${fast.tier.toFixed(1)}단계)이 보통 아이(${slow.tier.toFixed(1)}단계)보다 높이 못 올라간다 — 속도 축이 죽었다`);
+  }
+}
+
 console.log('\n=== 무한 도전 관측 (게이트 아님) ===');
 const byRarity = (r) => ALLIES.filter((u) => u.rarity === r).map((u) => u.id);
 // 🔴 눈금이 성기면 로스터별 도달 한계가 같은 칸에 뭉쳐 "소환이 의미 있는가"를 못 본다

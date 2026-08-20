@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MAX_TIER, EASY_STREAK_TO_RAISE, LOSE_STREAK_TO_DROP, nextTier, tierAoe, tierAtk, tierBreakShare, tierTargetP,
+  MAX_TIER, EASY_STREAK_TO_RAISE, LOSE_STREAK_TO_DROP, FAST_PACE_MS, nextTier,
+  tierAoe, tierAtk, tierBreakShare, tierTargetP, tierVolume,
 } from '../src/sim/tier';
 import { Battle } from '../src/sim/core';
 import { stageDef } from '../src/sim/stages';
@@ -298,6 +299,9 @@ describe('프로브 모델과 단계 표가 일치한다', () => {
       expect(probe.TIER_BREAK[t]).toBeCloseTo(tierBreakShare(t), 10);
       expect(probe.TIER_AOE[t]).toBeCloseTo(tierAoe(t), 10);
       expect(probe.TIER_TARGET_P[t]).toBeCloseTo(tierTargetP(t), 10);
+      // 🔴 물량 배율은 2026-08-20 에 추가된 축이다. 표 대조에서 빠지면 코어와 프로브가
+      //    조용히 갈라진 채 게이트가 초록불을 낸다 — 이 저장소가 예비대 미러에서 이미 당한 실패다.
+      expect(probe.TIER_VOL[t]).toBeCloseTo(tierVolume(t), 10);
     }
   });
 
@@ -311,20 +315,26 @@ describe('프로브 모델과 단계 표가 일치한다', () => {
     //    그 값이 없으면 한쪽에만 압도 규칙이 있어도 전부 통과한다(규칙 갈라짐을 못 잡는다).
     const CASTLE = [0, 0.5, 0.84, 0.85, 0.86, 0.998, 0.999, 1];
     const ACC = [0, 0.5, 0.69, 0.7, 0.71, 0.89, 0.9, 1];
+    // 빠름/느림 경계(FAST_PACE_MS)와 '값 없음'을 모두 포함한다
+    const PACE: (number | undefined)[] = [undefined, 0, 900, FAST_PACE_MS, FAST_PACE_MS + 1, 3000];
     const TIERS = MAX_TIER + 3;   // -1 .. MAX_TIER+1
     for (let t = -1; t <= MAX_TIER + 1; t++) {
       for (const streak of [0, 1, 2]) {
         for (const win of [true, false]) {
           for (const castleLeft of CASTLE) {
             for (const accuracy of ACC) {
-              const m = { win, castleLeft, accuracy };
-              expect(probe.nextTier(t, streak, m)).toEqual(nextTier(t, streak, m));
-              cases++;
+              // 🔴 응답 속도(paceMs)까지 격자에 넣는다. '완전 압도'(+4칸)가 한쪽에만 있어도
+              //    이 축이 없으면 전부 통과한다 — 표만 맞고 규칙이 갈라지는 그 실패 모드다.
+              for (const paceMs of PACE) {
+                const m = { win, castleLeft, accuracy, paceMs };
+                expect(probe.nextTier(t, streak, m)).toEqual(nextTier(t, streak, m));
+                cases++;
+              }
             }
           }
         }
       }
     }
-    expect(cases).toBe(TIERS * 3 * 2 * CASTLE.length * ACC.length);   // 격자가 실제로 다 돌았는지
+    expect(cases).toBe(TIERS * 3 * 2 * CASTLE.length * ACC.length * PACE.length);   // 격자가 실제로 다 돌았는지
   });
 });

@@ -4,6 +4,7 @@ import {
   ALLIES, RARITIES, DECK_SIZE, reconcileDeck, progressionAllies,
   maxLevel, rarityRank, ALLY_BY_ID,
 } from '../sim/units';
+import type { UnitDef } from '../sim/types';
 import {
   stageDef, chapterStages, chapterOf, chapterName, CHAPTER_LEN, CAMPAIGN_STAGES,
 } from '../sim/stages';
@@ -23,6 +24,9 @@ import { buildChoices } from '../edu/distractor';
 import { makeRng, type Question } from '../edu/generator';
 import { play, syncBgmSetting } from '../render/audio';
 import { assetUrl } from '../render/assets';
+import {
+  missionsFor, claimable, claim, isDone, allDone, rollDaily, DAILY_BONUS,
+} from '../meta/daily';
 import { accuracy, automaticity, questionDensity, retention, thetaDelta, thetaDisplayable, weakTypes } from '../edu/stats';
 import {
   boardEnabled, fetchBoard, submitScore, grantConsent, revokeConsent, entryName, type BoardEntry,
@@ -55,6 +59,41 @@ function stat(k: string, v: string): HTMLElement {
 }
 
 // ── 메인 메뉴 ────────────────────────────────────────────────────────────
+/**
+ * 다음에 합류할 셈지기 예고.
+ *
+ * 🔴 결과 화면에는 "새 셈지기가 합류했어요!"가 **이미 벌어진 뒤에만** 있었다.
+ *    그건 보상이지 동기가 아니다 — "한 판만 더"를 만드는 건 *다음에 뭐가 오는지 아는 것*이다.
+ *    진도 해금표(units.unlock)는 이미 있는데 아이에게 한 번도 안 보여 주고 있었다.
+ * 🔴 너무 먼 것은 알리지 않는다. 다섯 판 밖의 예고는 목표가 아니라 소음이다.
+ */
+/**
+ * 한글 조사 — 앞 글자의 **받침** 유무로 고른다.
+ * 🔴 "이(가)" 같은 괄호 표기를 쓰지 않는다. 이 게임은 대상이 초등 2~4학년이라
+ *    한자와 %까지 뺀 곳이다 — 괄호 조사는 읽기를 한 번 더 멈추게 한다.
+ *    셈지기 이름은 데이터에서 오므로(«까치» / «나막신장수») 문장에 박아 둘 수 없다.
+ * 🔴 한글이 아닌 글자로 끝나면(숫자·기호) 받침 없는 쪽을 쓴다 — 틀려도 덜 어색하다.
+ */
+function josa(word: string, withBatchim: string, without: string): string {
+  const last = word.charCodeAt(word.length - 1);
+  if (Number.isNaN(last) || last < 0xac00 || last > 0xd7a3) return without;
+  return (last - 0xac00) % 28 === 0 ? without : withBatchim;
+}
+
+const UNLOCK_TEASE_WITHIN = 5;
+
+function nextUnlock(maxStage: number): { inStages: number; unit: UnitDef } | null {
+  let best: UnitDef | null = null;
+  for (const u of ALLIES) {
+    if (u.unlock <= maxStage) continue;
+    if (!best || u.unlock < best.unlock) best = u;
+  }
+  if (!best) return null;
+  const inStages = best.unlock - maxStage;
+  return inStages <= UNLOCK_TEASE_WITHIN ? { inStages, unit: best } : null;
+}
+
+
 /**
  * 메뉴에 띄우는 **오늘 할 것** 한 줄.
  *
@@ -89,10 +128,52 @@ function todayCard(d: SaveData, go: Go): HTMLElement | null {
       btn('더 멀리 가기', () => go('map'), 'btn ju'),
     );
   }
+  const soon = nextUnlock(d.progress.maxStage);
   return el('div', { class: 'card today' },
     el('b', {}, `${next}번째 길이 기다리고 있어요`),
-    el('div', { class: 'muted' }, '문제를 맞히면 셈력이 차오르고, 셈지기가 달려 나가요.'),
+    el('div', { class: 'muted' }, soon
+      ? `${soon.inStages === 1 ? '이 길을 깨면' : `${soon.inStages}판 더 가면`} `
+        + `«${soon.unit.name}»${josa(soon.unit.name, '이', '가')} 합류해요.`
+      : '문제를 맞히면 셈력이 차오르고, 셈지기가 달려 나가요.'),
     btn('이어서 하기', () => go('map'), 'btn ju'),
+  );
+}
+
+/**
+ * 오늘의 임무 카드.
+ *
+ * 🔴 **여기에 손실 회피를 넣지 않는다.** 남은 시간, 연속 며칠, "놓치면 사라져요" 전부 금지다
+ *    (근거는 위 todayCard 주석과 src/meta/daily.ts 머리말). 보여 주는 것은 **한 것**과
+ *    **받을 것**뿐이다. 하나도 못 해도 화면에 나무라는 말이 없어야 한다.
+ * 🔴 세 줄을 항상 다 보여 준다 — 끝난 것만 지우면 "오늘 얼마나 남았나"를 알 수 없어
+ *    세션의 끝선을 그려 준다는 목적 자체가 사라진다.
+ */
+function dailyCard(d: SaveData, refresh: () => void): HTMLElement {
+  const st = rollDaily(d.daily);
+  const ms = missionsFor();
+  const ready = claimable(st);
+  const rows = ms.map((m, i) => {
+    const done = isDone(st, i);
+    const cur = Math.min(m.goal, st.progress[i] ?? 0);
+    return el('div', { class: done ? 'quest done' : 'quest' },
+      el('span', { class: 'q-mark', 'aria-hidden': 'true' }, done ? '✅' : '⬜'),
+      el('span', { class: 'q-text' }, m.text),
+      el('span', { class: 'q-num' }, done ? `먹물 +${m.reward}` : `${cur}/${m.goal}`),
+    );
+  });
+  return el('div', { class: 'card quests' },
+    el('b', {}, allDone(st) ? '오늘의 임무를 다 했어요!' : '오늘의 임무'),
+    ...rows,
+    el('div', { class: 'muted fine' }, `셋 다 하면 먹물 ${DAILY_BONUS}을 더 받아요.`),
+    ...(ready > 0 ? [btn(`먹물 ${ready} 받기`, () => {
+      store.update((x) => {
+        const r = claim(rollDaily(x.daily));
+        x.daily = r.state;
+        x.currency.meokmul += r.ink;
+      });
+      play('summon');
+      refresh();
+    }, 'btn gold')] : []),
   );
 }
 
@@ -126,6 +207,9 @@ export function menuScreen(go: Go): { node: HTMLElement } {
       el('h1', { class: 'logo' }, '구구성 수호대'),
       el('p', { class: 'tag' }, '계산이 빨라질수록 내 군대가 강해진다'),
       ...(clearedN ? [todayCard(d, go)].filter((x): x is HTMLElement => x !== null) : []),
+      // 🔴 임무는 **한 판이라도 해 본 아이에게만** 보여 준다. 처음 켠 화면에 할 일 목록이
+      //    세 줄 떠 있으면 게임이 아니라 숙제로 보인다(첫 화면은 '시작하기' 하나여야 한다).
+      ...(clearedN ? [dailyCard(d, () => go('menu'))] : []),
       clearedN
         ? el('div', { class: 'menu-progress' },
             stat('가장 멀리 간 길', best ? `${chapterOf(best)}구역 ${((best - 1) % CHAPTER_LEN) + 1}` : '—'),
