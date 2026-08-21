@@ -74,6 +74,7 @@ export const NICK_N = 8;
 
 export const ALLOWED_ORIGINS = [
   'https://insushim.github.io',
+  'https://gugu-guardians.pages.dev',
   'http://localhost:5183',
   'http://localhost:5184',
   'http://localhost:5185',
