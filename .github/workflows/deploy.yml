@@ -60,3 +60,48 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # 🔴 **학생이 실제로 여는 주소는 여기다.**
+  #
+  #    2026-08-21 에 배포를 Cloudflare Pages 로 옮겼다(교육청 네트워크가 `github.io` 를
+  #    도메인째 막는다). 그런데 **파이프라인은 이사를 안 갔다** — CI 는 계속 github.io 로만
+  #    나가고, `gugu-guardians.pages.dev` 는 누가 `wrangler pages deploy` 를 손으로 쳐야만
+  #    갱신됐다(`wrangler pages project list` → Git Provider: No).
+  #
+  #    결과: 다음 날 푸시한 변경이 CI 초록불을 받고도 **학생에게는 도달하지 않았다.**
+  #    두 주소의 번들 해시가 서로 달랐다(2026-08-22 실측). 초록불이 거짓말을 한 것이다.
+  #
+  #    🔴 손으로 치는 걸 기억해야 하는 구조는 반드시 잊힌다. 그래서 CI 에 넣는다.
+  #    github.io 배포는 **일부러 남긴다** — 기존 링크가 깨지지 않도록.
+  cloudflare:
+    needs: build
+    runs-on: ubuntu-latest
+    # 시크릿이 없으면 조용히 실패하지 말고 **건너뛴다**(로그에 이유가 남는다).
+    if: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: 시크릿 확인
+        id: gate
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN·CLOUDFLARE_ACCOUNT_ID 가 없어 학생 사이트(pages.dev) 배포를 건너뜁니다 — 그동안은 손으로 'npx wrangler pages deploy dist --project-name gugu-guardians --branch main' 를 쳐야 합니다."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Cloudflare Pages 배포 (학생이 여는 주소)
+        if: steps.gate.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name gugu-guardians --branch main

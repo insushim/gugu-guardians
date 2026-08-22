@@ -31,6 +31,31 @@ npm run build     # dist/ 에 정적 파일 생성
 npm run preview   # http://localhost:5184 에서 빌드 결과 확인
 ```
 
+### 🔴 학생이 여는 주소는 `gugu-guardians.pages.dev` 입니다
+
+교육청 네트워크가 `github.io` 를 **도메인째** 막습니다(ERR_TIMED_OUT). 그래서 2026-08-21 에
+Cloudflare Pages 로 옮겼습니다. 옛 주소도 링크가 깨지지 않게 당분간 살려 둡니다.
+
+⚠️ **2026-08-22 까지 파이프라인이 이사를 안 가 있었습니다.** CI 는 github.io 로만 나가고,
+`pages.dev` 는 손으로 `wrangler pages deploy` 를 쳐야만 갱신됐습니다 — 그래서 그 사이 푸시한
+변경이 **CI 초록불을 받고도 학생에게 도달하지 않았습니다**(두 주소의 번들 해시가 달랐습니다).
+지금은 `.github/workflows/deploy.yml` 의 `cloudflare` 잡이 자동으로 올립니다.
+
+그 잡은 저장소 시크릿 두 개가 있어야 돕니다. 없으면 **경고를 남기고 건너뜁니다**(조용히
+실패하지 않습니다):
+
+| 시크릿 | 무엇 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare 대시보드 → My Profile → API Tokens → **Edit Cloudflare Workers** 템플릿(Pages 쓰기 포함) |
+| `CLOUDFLARE_ACCOUNT_ID` | 대시보드 우측의 Account ID |
+
+시크릿을 넣기 전까지는 배포 때마다 이걸 손으로 쳐야 합니다:
+
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name gugu-guardians --branch main
+```
+
 `dist/` 폴더를 정적 호스팅에 그대로 올리면 끝입니다(Netlify·Vercel·GitHub Pages·학교 서버 등).
 게임 자체에는 API 키도 시크릿도 없습니다 — 번들에 들어가는 유일한 외부 주소는 순위 서버의 공개 URL입니다.
 
