@@ -4,7 +4,10 @@
 > 로그인 없이 브라우저에서 바로 플레이. 학습 기록은 기기에만 저장됩니다.
 > 주간 순위는 **켜야만** 동작하고, 켜도 자동 생성 별명과 숫자 두 개만 나갑니다.
 
-**바로 하기 → https://insushim.github.io/gugu-guardians/**
+**바로 하기 → https://gugu-guardians.pages.dev/**
+>
+> ⚠️ 옛 주소 `insushim.github.io/gugu-guardians/` 는 **학교망이 도메인째 막는다**(ERR_TIMED_OUT).
+> 링크가 깨지지 않도록 당분간 살려 두지만, 교실에서 쓸 주소는 위쪽 pages.dev 다.
 
 - 대상: 초등 2~4학년 (수학 '수와 연산')
 - 화면: 가로 고정. 데스크톱 / 태블릿 / 폰 가로 모두 지원(최소 900×310)
