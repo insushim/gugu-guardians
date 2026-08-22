@@ -37,6 +37,8 @@ import type { RarityId } from '../sim/types';
 import type { SaveData } from '../save/schema';
 import { isDue } from '../edu/srs';
 import { daysBetween, today } from '../edu/date';
+import { aapState } from '../net/aap';
+import { aapStatusLine } from './aapStatus';
 
 type Go = (screen: string, payload?: unknown) => void;
 
@@ -1125,6 +1127,9 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
     if (confirmTwice()) { store.reset(); go('menu'); }
   }, 'btn sm ju');
 
+  // 🚪 배지는 4초 뒤 사라진다. 선생님이 **나중에** 확인할 자리가 필요하다.
+  const aapLine = aapStatusLine(aapState());
+
   const node = el('section', { class: 'screen' },
     topbar('설정', go),
     el('div', { class: 'pane' },
@@ -1147,6 +1152,11 @@ export function settingsScreen(go: Go): { node: HTMLElement } {
               : '꺼져 있어요. 순위표를 보기만 하는 건 켜지 않아도 돼요.'),
           )]
         : []),
+      el('div', { class: 'card' },
+        el('b', {}, '알찬 연결'),
+        el('div', {}, aapLine.title),
+        el('div', { class: 'muted' }, aapLine.detail),
+      ),
       el('div', { class: 'card' }, el('b', {}, '기록'), el('div', {}, resetBtn),
         el('div', { class: 'muted' }, '지우면 되돌릴 수 없어요.')),
     ),

@@ -13,6 +13,8 @@ import { matchInk } from './sim/economy';
 import { bump, rollDaily } from './meta/daily';
 import * as store from './save/store';
 import { submitScore } from './net/board';
+import { initAap, aapState } from './net/aap';
+import { showAapBadge } from './ui/aapBadge';
 import { weekKey, today } from './edu/date';
 import { stageDef } from './sim/stages';
 
@@ -129,12 +131,19 @@ function go(screen: string, payload?: unknown): void {
     default:
       mount(root, () => menuScreen(go));
   }
-  window.__gugu__ = { ...(window.__gugu__ ?? {}), screen, ready: true };
+  window.__gugu__ = { ...(window.__gugu__ ?? {}), screen, ready: true, aap: aapState() };
 }
 
 async function boot(): Promise<void> {
   applySettings();
   installUnlockHooks();   // 🔴 첫 사용자 입력에서 AudioContext 언락 (없으면 배포 후 무음)
+
+  // 🚪 알찬에서 넘어왔다면 신원을 받는다. **에셋 로딩과 나란히 돌린다** —
+  //    이걸 기다리느라 게임 시작이 늦어지면 안 된다(로그인 없는 게임이라는 성질을 지킨다).
+  //    ⚠️ `initAap` 은 절대 던지지 않는다(안에서 다 잡는다). 그래도 방어를 한 겹 더 둔다 —
+  //       여기서 던지면 boot 의 catch 가 물어 **게임 전체가 "문제가 생겼어요"로 죽는다.**
+  const identity = initAap().catch(() => undefined);
+
   const bar = document.createElement('div');
   bar.className = 'boot';
   bar.textContent = '셈나라를 여는 중… 0%';
@@ -146,6 +155,19 @@ async function boot(): Promise<void> {
 
   snapshotWeekly();
   go('menu');
+
+  // 🔴 **신원을 기다리지 않는다.** 처음엔 여기서 `await identity` 를 했는데, 그러면 바로 위
+  //    주석("게임 시작이 늦어지면 안 된다")과 코드가 정면으로 어긋난다 — 에셋이 다 받아져
+  //    진행바가 100% 를 찍어도 화면은 신원이 올 때까지 멈춰 있다. 최악은 discovery·JWKS
+  //    두 번(회전 시 세 번) 왕복 × 5초 상한이라 학교망에서 체감 프리징이 된다.
+  //    (2026-08-22 Gemini 레인 — **내가 쓴 주석이 내 코드를 고발했다.**)
+  //    배지는 늦게 붙어도 아무 문제가 없다. 메뉴가 늦게 뜨는 것만 문제다.
+  void identity.then(() => {
+    showAapBadge(aapState());
+    // QA/E2E 훅도 같이 갱신한다 — `go()` 안에서만 쓰면 신원이 늦게 와도 화면 전환 전까지
+    // 옛 값(`none`)이 남아, 자동화가 "연결 안 됨"으로 오독한다.
+    window.__gugu__ = { ...(window.__gugu__ ?? {}), aap: aapState() };
+  });
 }
 
 // 가로 모드 안내 — 세로에서는 힌트를 띄운다(CSS가 landscape에서 자동으로 숨긴다)
